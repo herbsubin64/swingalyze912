@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Swingalyze — Baseline + Analysis</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link href="/static/styles.css" rel="stylesheet" />
+</head>
+<body>
+  <div class="wrap">
+    <h1>Swingalyze (baseline + headless analysis)</h1>
+
+    <form id="uploadForm">
+      <input type="file" id="fileInput" accept="video/*" />
+      <button type="button" id="analyzeBtn">Analyze</button>
+    </form>
+
+    <div class="grid">
+      <div class="panel">
+        <video id="player" controls></video>
+      </div>
+      <div class="panel">
+        <pre id="result">{ upload a clip and click Analyze }</pre>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/script.js"></script>
+</body>
+</html>
