@@ -1,0 +1,33 @@
+cat > .gitignore <<'EOF'
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.eggs/
+
+# Virtual envs
+.venv/
+venv/
+ENV/
+env/
+
+# OS / tools
+.DS_Store
+*.log
+
+# Build / wheels / native libs
+*.so
+*.dll
+*.dylib
+dist/
+build/
+
+# App runtime
+uploads/*
+results/*
+
+# Keep a tiny sample if needed:
+!uploads/sample.mp4
+EOF
