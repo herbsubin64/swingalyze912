@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>Swingalyze — Baseline + Overlay MVP</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <link rel="stylesheet" href="/static/styles.css"/>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Swingalyze — Upload, Play, Analyze</h1>
+
+    <form id="uploadForm">
+      <input id="file" name="file" type="file" accept=".mp4,.mov,.webm,.m4v" required/>
+      <button type="submit">Upload</button>
+      <span class="hint">Use &lt; 50 MB to avoid 413.</span>
+    </form>
+
+    <div class="grid">
+      <div class="panel">
+        <video id="player" controls playsinline></video>
+      </div>
+
+      <div class="panel">
+        <div class="analysis-bar">
+          <label>
+            <input type="checkbox" id="renderOverlay" checked />
+            Render overlay
+          </label>
+          <button id="analyzeBtn" disabled>Analyze</button>
+          <span id="status"></span>
+        </div>
+
+        <div id="links" class="hint"></div>
+        <pre id="output">(analysis output will appear here)</pre>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/script.js"></script>
+</body>
+</html>

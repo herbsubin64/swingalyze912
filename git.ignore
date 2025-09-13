@@ -1,0 +1,16 @@
+# Python cache & venv
+__pycache__/
+*.pyc
+.venv/
+*.log
+
+# Results / uploads (user data)
+uploads/
+results/
+
+# VSCode
+.vscode/
+
+# OS stuff
+.DS_Store
+Thumbs.db
