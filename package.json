@@ -1,0 +1,11 @@
+{
+  "name": "swingalyze",
+  "version": "1.9.0",
+  "type": "module",
+  "private": true,
+  "scripts": { "start": "node server.js" },
+  "dependencies": {
+    "express": "^4.19.2",
+    "express-fileupload": "^1.5.1"
+  }
+}

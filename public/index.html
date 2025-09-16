@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Swingalyze — Server-integrated (v1.8.0)</title>
+  <style>
+    body{background:#0e1116;color:#e8eef7;font:14px/1.4 system-ui,Segoe UI,Roboto,Arial}
+    header{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:#121826;position:sticky;top:0}
+    .btn{padding:6px 10px;border:1px solid #2a3344;background:#161c28;color:#e8eef7;border-radius:6px;cursor:pointer;margin-right:8px}
+    .row{display:flex;gap:8px;align-items:center}
+    .card{background:#121826;border:1px solid #273244;border-radius:10px;padding:12px;margin:12px 16px}
+    .kv{display:grid;grid-template-columns:180px 1fr;gap:8px}
+    video{width:100%;max-width:720px;background:#000;border-radius:8px}
+    .badge{font-size:12px;background:#1b7fff22;border:1px solid #2f6dd9;padding:2px 6px;border-radius:6px}
+    code{background:#0b111a;padding:2px 4px;border-radius:4px}
+  </style>
+</head>
+<body>
+  <header>
+    <div>Swingalyze — Server-integrated</div>
+    <div class="badge">v1.8.0</div>
+  </header>
+
+  <div class="card">
+    <div class="row">
+      <input id="file" type="file" accept="video/*" class="btn"/>
+      <button class="btn" id="upload">Upload Video → Server</button>
+      <button class="btn" id="analyzeUpload">Analyze uploaded</button>
+      <button class="btn" id="analyzeBuiltin">Analyze golf1.mp4</button>
+      <span id="status" class="badge">Ready</span>
+    </div>
+    <video id="player" controls playsinline></video>
+  </div>
+
+  <div class="card">
+    <h3>Key-Frame Analyzer</h3>
+    <div class="kv">
+      <div>Address</div>        <div id="addr">–</div>
+      <div>Club parallel</div>  <div id="club">–</div>
+      <div>Top</div>            <div id="top">–</div>
+      <div>Impact</div>         <div id="imp">–</div>
+      <div>Follow-through</div> <div id="fol">–</div>
+      <div>Backswing</div>      <div id="back">–</div>
+      <div>Downswing</div>      <div id="down">–</div>
+      <div>Ratio</div>          <div id="ratio">–</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Tempo</h3>
+    <div class="kv">
+      <div>Backswing</div>   <div id="t_back">–</div>
+      <div>Downswing</div>   <div id="t_down">–</div>
+      <div>Ratio</div>       <div id="t_ratio">–</div>
+      <div>Quality</div>     <div id="t_note">–</div>
+      <div>Confidence</div>  <div id="t_conf">–</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Angles</h3>
+    <div class="kv">
+      <div>Spine @Top</div>    <div id="a_st">–</div>
+      <div>Spine @Impact</div> <div id="a_si">–</div>
+      <div>Shaft @Top</div>    <div id="a_ht">–</div>
+      <div>Shaft @Impact</div> <div id="a_hi">–</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Stance</h3>
+    <div class="kv">
+      <div>Address (frac)</div> <div id="s_af">–</div>
+      <div>Impact (frac)</div>  <div id="s_if">–</div>
+      <div>Samples</div>        <div id="samples">–</div>
+      <div>Step</div>           <div id="step">–</div>
+    </div>
+  </div>
+
+<script>
+async function post(url, body){
+  const r = await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  return await r.json();
+}
+function fmt(v){ return (v==null||!isFinite(v))?'–':(typeof v==='number'?v.toFixed(2):v); }
+
+function render(j){
+  const k=j.keyframes||{};
+  document.getElementById('addr').textContent  = fmt(k.addressT);
+  document.getElementById('club').textContent  = fmt(k.clubParallelT);
+  document.getElementById('top').textContent   = fmt(k.topT);
+  document.getElementById('imp').textContent   = fmt(k.impactT);
+  document.getElementById('fol').textContent   = fmt(k.followT);
+  document.getElementById('back').textContent  = fmt(k.backswing);
+  document.getElementById('down').textContent  = fmt(k.downswing);
+  document.getElementById('ratio').textContent = fmt(k.ratio);
+
+  const t=j.tempo||{};
+  document.getElementById('t_back').textContent = fmt(t.backswing);
+  document.getElementById('t_down').textContent = fmt(t.downswing);
+  document.getElementById('t_ratio').textContent= fmt(t.ratio);
+  document.getElementById('t_note').textContent = t.qualityNote || '–';
+  document.getElementById('t_conf').textContent = fmt(t.confidence);
+
+  const a=j.angles||{};
+  document.getElementById('a_st').textContent = fmt(a.spineTiltTop);
+  document.getElementById('a_si').textContent = fmt(a.spineTiltImpact);
+  document.getElementById('a_ht').textContent = fmt(a.shaftTop);
+  document.getElementById('a_hi').textContent = fmt(a.shaftImpact);
+
+  const s=j.series||{}; const st=j.stance||{};
+  document.getElementById('samples').textContent = s.samples ?? '–';
+  document.getElementById('step').textContent    = fmt(s.stepSec);
+  document.getElementById('s_af').textContent    = st.address && st.address.frac!=null ? fmt(st.address.frac) : '–';
+  document.getElementById('s_if').textContent    = st.impact  && st.impact.frac!=null  ? fmt(st.impact.frac)  : '–';
+}
+
+document.getElementById('upload').onclick = async () => {
+  const f = document.getElementById('file').files[0];
+  if(!f){ alert('Pick a file'); return; }
+  const fd = new FormData(); fd.append('file', f);
+  const r  = await fetch('/api/upload',{method:'POST', body:fd});
+  const j  = await r.json();
+  document.getElementById('status').textContent = j.ok?'Uploaded upload.mp4':'Upload failed';
+};
+
+document.getElementById('analyzeUpload').onclick = async () => {
+  const j = await post('/api/analyze', { video:'upload.mp4' });
+  document.getElementById('status').textContent = j.ok?'Analyzed upload.mp4':'Analyze failed';
+  if(j.ok) render(j);
+};
+
+document.getElementById('analyzeBuiltin').onclick = async () => {
+  const j = await post('/api/analyze', { video:'golf1.mp4' });
+  document.getElementById('status').textContent = j.ok?'Analyzed golf1.mp4':'Analyze failed';
+  if(j.ok) render(j);
+};
+</script>
+</body>
+</html>
