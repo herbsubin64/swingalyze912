@@ -1,0 +1,16 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Node
+node_modules/
+
+# App outputs
+outputs/
+public/upload.mp4
+public/*.mp4
+
+# OS/Editor
+.DS_Store
+*.log

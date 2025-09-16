@@ -1,0 +1,15 @@
+{
+  "name": "swingalyze",
+  "version": "1.7.0",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "smoke": "bash scripts/smoke.sh",
+    "repro": "bash scripts/repro.sh",
+    "check": "npm run smoke && npm run repro"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "express-fileupload": "^1.5.1"
+  }
+}

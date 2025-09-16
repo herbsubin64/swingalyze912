@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Swingalyze — Server-integrated v1.7.0 (baseline)</title>
+<style>body{font-family:system-ui,Segoe UI,Arial;margin:20px;}.mono{font-family:ui-monospace,Consolas,monospace;white-space:pre}</style>
+</head><body>
+<h1>Swingalyze — Server-integrated <small>v1.7.0</small></h1>
+<p><button id="btnUpload">Upload Video → Server</button>
+<button id="btnAnalyzeUpload">Analyze uploaded</button>
+<button id="btnAnalyzeGolf1">Analyze golf1.mp4</button></p>
+<div id="status" class="mono">Idle.</div>
+<h3>Keyframes</h3><div id="k" class="mono">—</div>
+<h3>Series</h3><div id="s" class="mono">—</div>
+<script>
+async function analyze(video){
+  setStatus('Analyzing '+video+' ...');
+  const r = await fetch('/api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video})});
+  const j = await r.json().catch(()=> ({}));
+  if (!r.ok || !j.ok) { setStatus('Analysis failed: '+(j.reason||j.error||r.statusText)); console.log('ERR',j); return; }
+  document.getElementById('k').textContent = JSON.stringify(j.keyframes,null,2);
+  document.getElementById('s').textContent = JSON.stringify({stepSec:j.series.stepSec,samples:j.series.samples,range:[Math.min(...j.series.motion),Math.max(...j.series.motion)]},null,2);
+  setStatus('Server analysis complete.');
+}
+function setStatus(t){ document.getElementById('status').textContent = t; }
+document.getElementById('btnAnalyzeUpload').onclick = ()=> analyze('upload.mp4');
+document.getElementById('btnAnalyzeGolf1').onclick  = ()=> analyze('golf1.mp4');
+document.getElementById('btnUpload').onclick = async ()=>{
+  const f = await pickFile(); if (!f) return;
+  const fd = new FormData(); fd.append('video', f, 'upload.mp4');
+  const r = await fetch('/api/upload',{method:'POST',body:fd}); const j=await r.json();
+  setStatus(j.ok?('Upload complete: '+j.saved+' ('+j.size+' bytes)') : ('Upload failed: '+(j.error||'unknown')));
+}
+async function pickFile(){
+  return new Promise(res=>{
+    const inp = Object.assign(document.createElement('input'),{type:'file',accept:'video/*'});
+    inp.onchange = ()=> res(inp.files && inp.files[0]); inp.click();
+  });
+}
+</script>
+</body></html>
