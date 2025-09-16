@@ -1,0 +1,25 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [ main ]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22.x' }
+      - run: npm ci || npm i
+      - run: nohup npm start >/dev/null 2>&1 & echo $! > server.pid
+      - run: sleep 3
+      - name: Smoke status
+        run: curl -sS http://localhost:3000/api/status | jq -e '.ok == true'
+      - name: Analyze sample (if present)
+        run: |
+          curl -sS -H 'Content-Type: application/json' \
+            -d '{"video":"golf1.mp4"}' \
+            http://localhost:3000/api/analyze | jq -e '.ok == true or .error == "clip_missing"'
+      - name: Stop server
+        if: always()
+        run: kill $(cat server.pid) || true
