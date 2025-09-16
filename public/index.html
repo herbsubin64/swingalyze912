@@ -1,35 +1,92 @@
 <!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Swingalyze — Server-integrated v1.7.0 (baseline)</title>
-<style>body{font-family:system-ui,Segoe UI,Arial;margin:20px;}.mono{font-family:ui-monospace,Consolas,monospace;white-space:pre}</style>
+<title>Swingalyze — Server-integrated v1.8.0</title>
+<style>
+  :root{--mono:ui-monospace,Consolas,monospace}
+  body{font-family:system-ui,Segoe UI,Arial;margin:20px}
+  h1 small{font-weight:normal;color:#666}
+  .row{display:flex;gap:12px;flex-wrap:wrap;margin:12px 0}
+  .card{border:1px solid #e5e7eb;border-radius:10px;padding:12px;min-width:280px}
+  .mono{font-family:var(--mono);white-space:pre}
+  .ok{color:#0a7a2d}.bad{color:#b00020}
+  button{padding:8px 12px;border-radius:8px;border:1px solid #d1d5db;background:#fff;cursor:pointer}
+  button:hover{background:#f9fafb}
+</style>
 </head><body>
-<h1>Swingalyze — Server-integrated <small>v1.7.0</small></h1>
-<p><button id="btnUpload">Upload Video → Server</button>
-<button id="btnAnalyzeUpload">Analyze uploaded</button>
-<button id="btnAnalyzeGolf1">Analyze golf1.mp4</button></p>
+<h1>Swingalyze — Server-integrated <small>v1.8.0</small></h1>
+
+<div class="row">
+  <button id="btnUpload">Upload Video → Server</button>
+  <button id="btnAnalyzeUpload">Analyze uploaded</button>
+  <button id="btnAnalyzeGolf1">Analyze golf1.mp4</button>
+</div>
+
 <div id="status" class="mono">Idle.</div>
-<h3>Keyframes</h3><div id="k" class="mono">—</div>
-<h3>Series</h3><div id="s" class="mono">—</div>
+
+<div class="row">
+  <div class="card" style="flex:1">
+    <h3>Keyframes</h3>
+    <div id="k" class="mono">—</div>
+  </div>
+  <div class="card" style="flex:1">
+    <h3>Series</h3>
+    <div id="s" class="mono">—</div>
+  </div>
+  <div class="card" style="flex:1">
+    <h3>Angles</h3>
+    <div id="a" class="mono">—</div>
+  </div>
+</div>
+
 <script>
+function setStatus(t,cls){ const el=document.getElementById('status'); el.textContent=t; el.className='mono '+(cls||''); }
+
 async function analyze(video){
-  setStatus('Analyzing '+video+' ...');
+  setStatus('Analyzing '+video+' …');
   const r = await fetch('/api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video})});
   const j = await r.json().catch(()=> ({}));
-  if (!r.ok || !j.ok) { setStatus('Analysis failed: '+(j.reason||j.error||r.statusText)); console.log('ERR',j); return; }
-  document.getElementById('k').textContent = JSON.stringify(j.keyframes,null,2);
-  document.getElementById('s').textContent = JSON.stringify({stepSec:j.series.stepSec,samples:j.series.samples,range:[Math.min(...j.series.motion),Math.max(...j.series.motion)]},null,2);
-  setStatus('Server analysis complete.');
+  if (!r.ok || !j.ok){
+    setStatus('Analysis failed: '+(j.reason||j.error||r.statusText),'bad');
+    console.log('ERR',j);
+    document.getElementById('k').textContent='—';
+    document.getElementById('s').textContent='—';
+    document.getElementById('a').textContent='—';
+    return;
+  }
+  document.getElementById('k').textContent = JSON.stringify(j.keyframes, null, 2);
+  const series = j.series || {};
+  const motion = Array.isArray(series.motion) ? series.motion : [];
+  const min = motion.length ? Math.min(...motion) : null;
+  const max = motion.length ? Math.max(...motion) : null;
+  document.getElementById('s').textContent = JSON.stringify({
+    stepSec: series.stepSec, samples: series.samples, range:[min,max]
+  }, null, 2);
+
+  const f = v => (v==null || !isFinite(v)) ? '—' : (Number(v).toFixed(1)+'°');
+  const angles = j.angles || {};
+  const pretty = {
+    spineTiltTop:     f(angles.spineTiltTop),
+    spineTiltImpact:  f(angles.spineTiltImpact),
+    shaftTop:         f(angles.shaftTop),
+    shaftImpact:      f(angles.shaftImpact)
+  };
+  document.getElementById('a').textContent = JSON.stringify(pretty, null, 2);
+
+  setStatus('Server analysis complete.','ok');
 }
-function setStatus(t){ document.getElementById('status').textContent = t; }
+
 document.getElementById('btnAnalyzeUpload').onclick = ()=> analyze('upload.mp4');
 document.getElementById('btnAnalyzeGolf1').onclick  = ()=> analyze('golf1.mp4');
+
 document.getElementById('btnUpload').onclick = async ()=>{
   const f = await pickFile(); if (!f) return;
   const fd = new FormData(); fd.append('video', f, 'upload.mp4');
   const r = await fetch('/api/upload',{method:'POST',body:fd}); const j=await r.json();
-  setStatus(j.ok?('Upload complete: '+j.saved+' ('+j.size+' bytes)') : ('Upload failed: '+(j.error||'unknown')));
-}
+  if (j.ok) setStatus('Upload complete: '+j.saved+' ('+j.size+' bytes)','ok');
+  else setStatus('Upload failed: '+(j.error||'unknown'),'bad');
+};
+
 async function pickFile(){
   return new Promise(res=>{
     const inp = Object.assign(document.createElement('input'),{type:'file',accept:'video/*'});
