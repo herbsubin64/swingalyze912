@@ -1,6 +1,27 @@
 {
   "contractVersion": "1.0.0",
-  "gates": { "ratioMin": 1.2, "ratioMax": 30.0, "seriesMin": 10, "stepMax": 0.10, "magMin": -1.0, "magMax": 100.0 },
-  "detector": { "smoothSec": 0.12, "onsetSustain": 0.18, "preMarginSec": 0.18, "addressBackoffSec": 0.06, "topPreWin": 0.60, "clubMinDt": 0.22, "eps": 0.08, "stepSec": 0.02, "canvasW": 192 },
-  "features": { "angles": false, "stance": false, "clubPath": false }
+  "gates": {
+    "ratioMin": 1.2,
+    "ratioMax": 30.0,
+    "seriesMin": 10,
+    "stepMax": 0.10,
+    "magMin": -1.0,
+    "magMax": 100.0
+  },
+  "detector": {
+    "smoothSec": 0.12,
+    "onsetSustain": 0.18,
+    "preMarginSec": 0.18,
+    "addressBackoffSec": 0.06,
+    "topPreWin": 0.60,
+    "clubMinDt": 0.22,
+    "eps": 0.08,
+    "stepSec": 0.02,
+    "canvasW": 192
+  },
+  "features": {
+    "angles": true,
+    "stance": false,
+    "clubPath": false
+  }
 }

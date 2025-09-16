@@ -6,7 +6,8 @@ def load_cfg():
     try:
         with open(p,'r') as f: return json.load(f)
     except:
-        return {"detector":{"smoothSec":0.12,"onsetSustain":0.18,"preMarginSec":0.18,"addressBackoffSec":0.06,"topPreWin":0.60,"clubMinDt":0.22,"eps":0.08,"stepSec":0.02,"canvasW":192}}
+        return {"detector":{"smoothSec":0.12,"onsetSustain":0.18,"preMarginSec":0.18,"addressBackoffSec":0.06,"topPreWin":0.60,"clubMinDt":0.22,"eps":0.08,"stepSec":0.02,"canvasW":192},
+                "features":{"angles":False}}
 
 CFG = load_cfg()
 SMOOTH_SEC       = float(CFG["detector"]["smoothSec"])
@@ -115,7 +116,6 @@ def analyze(video_path, step_sec=STEP_SEC_DEFAULT, canvas_w=CANVAS_W_DEFAULT):
         if S[i] < settle_th: idxFollow = i; break
 
     def t_at(i): return float(T[min(max(0,i), len(T)-1)])
-
     addr = t_at(idxAddr); club = t_at(idxClub); top = t_at(idxTop); imp = t_at(idxImpact); fol = t_at(idxFollow)
 
     if club < addr + EPS: club = addr + EPS
@@ -132,11 +132,88 @@ def analyze(video_path, step_sec=STEP_SEC_DEFAULT, canvas_w=CANVAS_W_DEFAULT):
          "backswing":round(tb,3), "downswing":round(td,3), "ratio":ratio}
 
     series = {"stepSec":step_sec, "samples":int(len(S)), "width":int(CANVAS_W_DEFAULT),
-              "height":int(max(1, int(round(CANVAS_W_DEFAULT * ((cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 720) / max(1.0, (cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 1280)) ))))),
+              "height":int(max(1, int(round(CANVAS_W_DEFAULT * ((Ht / max(1, CANVAS_W_DEFAULT)) ))))),
               "motion":[float(v) for v in S[:1500]]}
 
     print("__KEYFRAMES__ " + json.dumps(k, separators=(',',':')))
     print("__SERIES__ "    + json.dumps(series, separators=(',',':')))
+
+    # ---- ANGLES (feature-flag) ----
+    if CFG.get("features", {}).get("angles"):
+        angles = compute_angles(video_path, k)
+        print("__ANGLES__ " + json.dumps(angles, separators=(',',':')))
+
+def compute_angles(video_path, k):
+    """Best-effort angles; never throws. Returns nulls on failure."""
+    try:
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened(): return null_angles()
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        def frame_at(sec):
+            cap.set(cv2.CAP_PROP_POS_MSEC, max(0.0, float(sec))*1000.0)
+            ok, f = cap.read()
+            return f if ok and f is not None else None
+
+        f_top = frame_at(k.get("topT", 0.0))
+        f_imp = frame_at(k.get("impactT", 0.0))
+        cap.release()
+
+        res = {
+          "spineTiltTop":    compute_spine(f_top),
+          "spineTiltImpact": compute_spine(f_imp),
+          "shaftTop":        compute_shaft(f_top),
+          "shaftImpact":     compute_shaft(f_imp)
+        }
+        return res
+    except Exception:
+        return null_angles()
+
+def null_angles():
+    return {"spineTiltTop":None,"spineTiltImpact":None,"shaftTop":None,"shaftImpact":None}
+
+def compute_spine(frame):
+    if frame is None: return None
+    h, w = frame.shape[:2]
+    # central torso ROI: middle third
+    x0 = int(w*0.33); x1 = int(w*0.66); y0 = int(h*0.25); y1 = int(h*0.75)
+    roi = frame[y0:y1, x0:x1]
+    if roi.size == 0: return None
+    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+    gx = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
+    gy = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
+    angles = np.degrees(np.arctan2(gy, gx))  # -180..180
+    mag = cv2.magnitude(gx, gy)
+    mag = mag / (mag.max()+1e-6)
+    # Weighted orientation histogram
+    hist_bins = np.linspace(-90, 90, 181)  # collapse left/right symmetry
+    ang = np.abs(angles)  # spine roughly vertical; use abs
+    weights = mag
+    hist, edges = np.histogram(ang, bins=hist_bins, weights=weights)
+    dom = edges[np.argmax(hist)]  # degrees from horizontal toward vertical
+    # Convert to tilt from vertical: 0° = upright, + = lean
+    tilt = 90.0 - float(dom)
+    if not np.isfinite(tilt): return None
+    return round(tilt, 1)
+
+def compute_shaft(frame):
+    if frame is None: return None
+    h, w = frame.shape[:2]
+    # lower-right quadrant ROI (common for RH golfers DTL); still works as heuristic
+    x0 = int(w*0.45); x1 = int(w*0.95); y0 = int(h*0.45); y1 = int(h*0.95)
+    roi = frame[y0:y1, x0:x1]
+    if roi.size == 0: return None
+    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray,(5,5),0)
+    edges = cv2.Canny(blur, 60, 150, apertureSize=3, L2gradient=True)
+    lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=40, minLineLength=int(0.15*w), maxLineGap=10)
+    if lines is None or len(lines)==0: return None
+    # choose longest segment
+    best = max(lines[:,0], key=lambda L: (L[2]-L[0])**2 + (L[3]-L[1])**2)
+    dx, dy = best[2]-best[0], best[3]-best[1]
+    ang = np.degrees(np.arctan2(dy, dx))  # vs horizontal
+    # Normalize to [0,180); shaft angle vs horizontal
+    ang = (ang+180.0)%180.0
+    return round(ang, 1)
 
 if __name__ == "__main__":
     video = sys.argv[1] if len(sys.argv)>1 else "public/golf1.mp4"

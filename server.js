@@ -1,4 +1,3 @@
-// server.js — ESM
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
@@ -26,7 +25,7 @@ app.use(express.json());
 app.use(fileUpload({ limits: { fileSize: 200 * 1024 * 1024 }, useTempFiles: false }));
 app.use(express.static(path.join(__dirname,'public'),{fallthrough:true}));
 
-app.get('/api/status', (req,res)=>res.json({ ok:true, node:process.version, contract:CFG.contractVersion, proto:['__KEYFRAMES__','__SERIES__'] }));
+app.get('/api/status', (req,res)=>res.json({ ok:true, node:process.version, contract:CFG.contractVersion, proto:['__KEYFRAMES__','__SERIES__','__ANGLES__'] }));
 
 app.post('/api/upload', async (req,res) => {
   try {
@@ -53,11 +52,14 @@ app.post('/api/analyze', (req,res) => {
     const lines = out.split('\n');
     const kLine = lines.find(l => l.startsWith('__KEYFRAMES__ '));
     const sLine = lines.find(l => l.startsWith('__SERIES__ '));
+    const aLine = lines.find(l => l.startsWith('__ANGLES__ '));
     if (!kLine) return res.status(200).json({ ok:true, note:'no keyframes line', raw:out });
     try {
       const keyframes = JSON.parse(kLine.replace('__KEYFRAMES__ ','').trim());
       const series    = sLine ? JSON.parse(sLine.replace('__SERIES__ ','').trim()) : null;
+      const angles    = aLine ? JSON.parse(aLine.replace('__ANGLES__ ','').trim()) : null;
 
+      // Gates (unchanged; angles are not gated)
       const G = CFG.gates;
       const seq = [keyframes.addressT, keyframes.clubParallelT, keyframes.topT, keyframes.impactT, keyframes.followT];
       const mono = seq.every((v,i)=> i===0 || v >= (seq[i-1]-1e-6));
@@ -78,7 +80,7 @@ app.post('/api/analyze', (req,res) => {
         ratio, samples: series?.samples ?? 0, stepSec: series?.stepSec ?? null, vmin, vmax, keyframes, series
       });
 
-      return res.json({ ok:true, keyframes, series, contract: CFG.contractVersion });
+      return res.json({ ok:true, keyframes, series, angles, contract: CFG.contractVersion });
     } catch(e) {
       return res.status(200).json({ ok:true, note:'parse_failed', raw:out, err:String(e) });
     }
