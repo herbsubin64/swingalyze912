@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Swingalyze — Server-integrated v1.8.0</title>
+<title>Swingalyze — Server-integrated v1.9.0</title>
 <style>
   :root{--mono:ui-monospace,Consolas,monospace}
   body{font-family:system-ui,Segoe UI,Arial;margin:20px}
@@ -14,7 +14,7 @@
   button:hover{background:#f9fafb}
 </style>
 </head><body>
-<h1>Swingalyze — Server-integrated <small>v1.8.0</small></h1>
+<h1>Swingalyze — Server-integrated <small>v1.9.0</small></h1>
 
 <div class="row">
   <button id="btnUpload">Upload Video → Server</button>
@@ -25,18 +25,10 @@
 <div id="status" class="mono">Idle.</div>
 
 <div class="row">
-  <div class="card" style="flex:1">
-    <h3>Keyframes</h3>
-    <div id="k" class="mono">—</div>
-  </div>
-  <div class="card" style="flex:1">
-    <h3>Series</h3>
-    <div id="s" class="mono">—</div>
-  </div>
-  <div class="card" style="flex:1">
-    <h3>Angles</h3>
-    <div id="a" class="mono">—</div>
-  </div>
+  <div class="card" style="flex:1"><h3>Keyframes</h3><div id="k" class="mono">—</div></div>
+  <div class="card" style="flex:1"><h3>Series</h3><div id="s" class="mono">—</div></div>
+  <div class="card" style="flex:1"><h3>Angles</h3><div id="a" class="mono">—</div></div>
+  <div class="card" style="flex:1"><h3>Stance</h3><div id="t" class="mono">—</div></div>
 </div>
 
 <script>
@@ -47,46 +39,41 @@ async function analyze(video){
   const r = await fetch('/api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video})});
   const j = await r.json().catch(()=> ({}));
   if (!r.ok || !j.ok){
-    setStatus('Analysis failed: '+(j.reason||j.error||r.statusText),'bad');
-    console.log('ERR',j);
-    document.getElementById('k').textContent='—';
-    document.getElementById('s').textContent='—';
-    document.getElementById('a').textContent='—';
-    return;
+    setStatus('Analysis failed: '+(j.reason||j.error||r.statusText),'bad'); console.log('ERR',j);
+    ['k','s','a','t'].forEach(id=>document.getElementById(id).textContent='—'); return;
   }
   document.getElementById('k').textContent = JSON.stringify(j.keyframes, null, 2);
-  const series = j.series || {};
-  const motion = Array.isArray(series.motion) ? series.motion : [];
-  const min = motion.length ? Math.min(...motion) : null;
-  const max = motion.length ? Math.max(...motion) : null;
-  document.getElementById('s').textContent = JSON.stringify({
-    stepSec: series.stepSec, samples: series.samples, range:[min,max]
-  }, null, 2);
+  const s = j.series || {}, mot = Array.isArray(s.motion)? s.motion : [];
+  const min = mot.length? Math.min(...mot): null, max = mot.length? Math.max(...mot): null;
+  document.getElementById('s').textContent = JSON.stringify({stepSec:s.stepSec,samples:s.samples,range:[min,max]}, null, 2);
 
   const f = v => (v==null || !isFinite(v)) ? '—' : (Number(v).toFixed(1)+'°');
-  const angles = j.angles || {};
-  const pretty = {
-    spineTiltTop:     f(angles.spineTiltTop),
-    spineTiltImpact:  f(angles.spineTiltImpact),
-    shaftTop:         f(angles.shaftTop),
-    shaftImpact:      f(angles.shaftImpact)
-  };
-  document.getElementById('a').textContent = JSON.stringify(pretty, null, 2);
+  const a = j.angles || {};
+  document.getElementById('a').textContent = JSON.stringify({
+    spineTiltTop: f(a.spineTiltTop),
+    spineTiltImpact: f(a.spineTiltImpact),
+    shaftTop: f(a.shaftTop),
+    shaftImpact: f(a.shaftImpact)
+  }, null, 2);
+
+  const g = v => v==null ? null : v;
+  const st = j.stance || {};
+  document.getElementById('t').textContent = JSON.stringify({
+    address: st.address ? { px: g(st.address.px), frac: g(st.address.frac) } : null,
+    impact:  st.impact  ? { px: g(st.impact.px),  frac: g(st.impact.frac)  } : null
+  }, null, 2);
 
   setStatus('Server analysis complete.','ok');
 }
 
 document.getElementById('btnAnalyzeUpload').onclick = ()=> analyze('upload.mp4');
 document.getElementById('btnAnalyzeGolf1').onclick  = ()=> analyze('golf1.mp4');
-
 document.getElementById('btnUpload').onclick = async ()=>{
   const f = await pickFile(); if (!f) return;
   const fd = new FormData(); fd.append('video', f, 'upload.mp4');
   const r = await fetch('/api/upload',{method:'POST',body:fd}); const j=await r.json();
-  if (j.ok) setStatus('Upload complete: '+j.saved+' ('+j.size+' bytes)','ok');
-  else setStatus('Upload failed: '+(j.error||'unknown'),'bad');
+  setStatus(j.ok?('Upload complete: '+j.saved+' ('+j.size+' bytes)') : ('Upload failed: '+(j.error||'unknown')), j.ok?'ok':'bad');
 };
-
 async function pickFile(){
   return new Promise(res=>{
     const inp = Object.assign(document.createElement('input'),{type:'file',accept:'video/*'});

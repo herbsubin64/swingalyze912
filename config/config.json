@@ -21,7 +21,7 @@
   },
   "features": {
     "angles": true,
-    "stance": false,
+    "stance": true,
     "clubPath": false
   }
 }

@@ -7,7 +7,7 @@ def load_cfg():
         with open(p,'r') as f: return json.load(f)
     except:
         return {"detector":{"smoothSec":0.12,"onsetSustain":0.18,"preMarginSec":0.18,"addressBackoffSec":0.06,"topPreWin":0.60,"clubMinDt":0.22,"eps":0.08,"stepSec":0.02,"canvasW":192},
-                "features":{"angles":False}}
+                "features":{"angles":False,"stance":False}}
 
 CFG = load_cfg()
 SMOOTH_SEC       = float(CFG["detector"]["smoothSec"])
@@ -132,7 +132,7 @@ def analyze(video_path, step_sec=STEP_SEC_DEFAULT, canvas_w=CANVAS_W_DEFAULT):
          "backswing":round(tb,3), "downswing":round(td,3), "ratio":ratio}
 
     series = {"stepSec":step_sec, "samples":int(len(S)), "width":int(CANVAS_W_DEFAULT),
-              "height":int(max(1, int(round(CANVAS_W_DEFAULT * ((Ht / max(1, CANVAS_W_DEFAULT)) ))))),
+              "height":int(max(1, int(round(CANVAS_W_DEFAULT * (prev_small.shape[0] / max(1, prev_small.shape[1])))))),
               "motion":[float(v) for v in S[:1500]]}
 
     print("__KEYFRAMES__ " + json.dumps(k, separators=(',',':')))
@@ -143,28 +143,29 @@ def analyze(video_path, step_sec=STEP_SEC_DEFAULT, canvas_w=CANVAS_W_DEFAULT):
         angles = compute_angles(video_path, k)
         print("__ANGLES__ " + json.dumps(angles, separators=(',',':')))
 
+    # ---- STANCE (feature-flag) ----
+    if CFG.get("features", {}).get("stance"):
+        stance = compute_stance(video_path, k)
+        print("__STANCE__ " + json.dumps(stance, separators=(',',':')))
+
+def safe_frame_at(cap, sec):
+    cap.set(cv2.CAP_PROP_POS_MSEC, max(0.0, float(sec))*1000.0)
+    ok, f = cap.read()
+    return f if ok and f is not None else None
+
 def compute_angles(video_path, k):
-    """Best-effort angles; never throws. Returns nulls on failure."""
     try:
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened(): return null_angles()
-        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-        def frame_at(sec):
-            cap.set(cv2.CAP_PROP_POS_MSEC, max(0.0, float(sec))*1000.0)
-            ok, f = cap.read()
-            return f if ok and f is not None else None
-
-        f_top = frame_at(k.get("topT", 0.0))
-        f_imp = frame_at(k.get("impactT", 0.0))
+        f_top = safe_frame_at(cap, k.get("topT", 0.0))
+        f_imp = safe_frame_at(cap, k.get("impactT", 0.0))
         cap.release()
-
-        res = {
+        return {
           "spineTiltTop":    compute_spine(f_top),
           "spineTiltImpact": compute_spine(f_imp),
           "shaftTop":        compute_shaft(f_top),
           "shaftImpact":     compute_shaft(f_imp)
         }
-        return res
     except Exception:
         return null_angles()
 
@@ -174,23 +175,18 @@ def null_angles():
 def compute_spine(frame):
     if frame is None: return None
     h, w = frame.shape[:2]
-    # central torso ROI: middle third
     x0 = int(w*0.33); x1 = int(w*0.66); y0 = int(h*0.25); y1 = int(h*0.75)
     roi = frame[y0:y1, x0:x1]
     if roi.size == 0: return None
     gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
     gx = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
     gy = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
-    angles = np.degrees(np.arctan2(gy, gx))  # -180..180
-    mag = cv2.magnitude(gx, gy)
-    mag = mag / (mag.max()+1e-6)
-    # Weighted orientation histogram
-    hist_bins = np.linspace(-90, 90, 181)  # collapse left/right symmetry
-    ang = np.abs(angles)  # spine roughly vertical; use abs
-    weights = mag
-    hist, edges = np.histogram(ang, bins=hist_bins, weights=weights)
-    dom = edges[np.argmax(hist)]  # degrees from horizontal toward vertical
-    # Convert to tilt from vertical: 0° = upright, + = lean
+    angles = np.degrees(np.arctan2(gy, gx))
+    mag = cv2.magnitude(gx, gy); mag = mag/(mag.max()+1e-6)
+    hist_bins = np.linspace(-90, 90, 181)
+    ang = np.abs(angles)
+    hist, edges = np.histogram(ang, bins=hist_bins, weights=mag)
+    dom = edges[np.argmax(hist)]
     tilt = 90.0 - float(dom)
     if not np.isfinite(tilt): return None
     return round(tilt, 1)
@@ -198,7 +194,6 @@ def compute_spine(frame):
 def compute_shaft(frame):
     if frame is None: return None
     h, w = frame.shape[:2]
-    # lower-right quadrant ROI (common for RH golfers DTL); still works as heuristic
     x0 = int(w*0.45); x1 = int(w*0.95); y0 = int(h*0.45); y1 = int(h*0.95)
     roi = frame[y0:y1, x0:x1]
     if roi.size == 0: return None
@@ -207,13 +202,60 @@ def compute_shaft(frame):
     edges = cv2.Canny(blur, 60, 150, apertureSize=3, L2gradient=True)
     lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=40, minLineLength=int(0.15*w), maxLineGap=10)
     if lines is None or len(lines)==0: return None
-    # choose longest segment
     best = max(lines[:,0], key=lambda L: (L[2]-L[0])**2 + (L[3]-L[1])**2)
     dx, dy = best[2]-best[0], best[3]-best[1]
-    ang = np.degrees(np.arctan2(dy, dx))  # vs horizontal
-    # Normalize to [0,180); shaft angle vs horizontal
+    ang = np.degrees(np.arctan2(dy, dx))
     ang = (ang+180.0)%180.0
     return round(ang, 1)
+
+def compute_stance(video_path, k):
+    """Estimate stance width at Address and Impact. Returns pixels and frame-normalized fraction."""
+    def find_feet(frame):
+        if frame is None: return None
+        h, w = frame.shape[:2]
+        # bottom 20% strip
+        y0 = int(h*0.80); y1 = h
+        roi = frame[y0:y1, :]
+        if roi.size == 0: return None
+        gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+        blur = cv2.GaussianBlur(gray,(5,5),0)
+        edges = cv2.Canny(blur, 50, 120)
+        # horizontal morphology to connect shoe edges
+        kx = cv2.getStructuringElement(cv2.MORPH_RECT,(21,3))
+        dil = cv2.dilate(edges, kx, iterations=1)
+        cnts, _ = cv2.findContours(dil, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # filter by size and y-position (near ground)
+        cand = []
+        for c in cnts:
+            x,y,wc,hc = cv2.boundingRect(c)
+            area = wc*hc
+            if area < 200: continue
+            # prefer low y (close to ground line)
+            cy = y + hc/2
+            cand.append((x, y, wc, hc, cy))
+        if len(cand) < 2: return None
+        # pick two widest-separated centroids
+        centers = [(x+wc/2, y+hc/2) for (x,y,wc,hc,cy) in cand]
+        best = None; bestd = -1
+        for i in range(len(centers)):
+            for j in range(i+1, len(centers)):
+                d = abs(centers[i][0]-centers[j][0])
+                if d > bestd:
+                    bestd = d; best = (centers[i][0], centers[j][0])
+        if best is None: return None
+        px = float(abs(best[0]-best[1]))
+        frac = px / max(1.0, w)
+        return {"px": round(px,1), "frac": round(frac,3)}
+
+    try:
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened(): return {"address":None,"impact":None}
+        f_addr = safe_frame_at(cap, k.get("addressT", 0.0))
+        f_imp  = safe_frame_at(cap, k.get("impactT", 0.0))
+        cap.release()
+        return {"address": find_feet(f_addr), "impact": find_feet(f_imp)}
+    except Exception:
+        return {"address":None,"impact":None}
 
 if __name__ == "__main__":
     video = sys.argv[1] if len(sys.argv)>1 else "public/golf1.mp4"

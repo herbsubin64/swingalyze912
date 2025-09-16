@@ -17,9 +17,9 @@ jobs:
       - run: python3 -m pip install opencv-python-headless numpy
       - run: nohup npm start >/dev/null 2>&1 & echo $! > server.pid
       - run: sleep 3
-      - name: Status
+      - name: Contract OK
         run: curl -sS http://localhost:3000/api/status | jq -e '.ok == true'
-      - name: Golden (angles, toleranced)
+      - name: Golden (angles + stance, toleranced)
         run: python3 scripts/verify_golden.py
       - name: Stop server
         if: always()
