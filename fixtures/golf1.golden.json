@@ -1,0 +1,22 @@
+{
+  "video": "golf1.mp4",
+  "expect": {
+    "keyframes": {
+      "monotonic": true,
+      "ratioMin": 1.0,
+      "ratioMax": 30.0
+    },
+    "series": {
+      "minSamples": 10,
+      "stepMax": 0.10,
+      "magMin": -1.0,
+      "magMax": 100.0
+    },
+    "angles": {
+      "spineTiltTop":    { "min": 0.0,  "max": 40.0,  "allowNull": false },
+      "spineTiltImpact": { "min": 60.0, "max": 100.0, "allowNull": false },
+      "shaftTop":        { "min": 20.0, "max": 70.0,  "allowNull": false },
+      "shaftImpact":     { "min": 15.0, "max": 50.0,  "allowNull": false }
+    }
+  }
+}
