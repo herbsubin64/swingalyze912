@@ -4,11 +4,13 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Swingalyze — Coaching (Checkpoint 2025-09-17)</title>
-  <link rel="stylesheet" href="./styles.css?v=20250917-04" />
+  <link rel="stylesheet" href="./styles.css?v=20250917-06" />
 </head>
 <body>
   <header class="topbar">
     <h1>Swingalyze — API-first Coaching</h1>
+    <div class="spacer"></div>
+    <span id="buildTag" class="buildtag" title="Build tag">dev</span>
     <div id="statusDot" class="dot offline" title="API status"></div>
   </header>
 
@@ -18,6 +20,8 @@
       <div class="upload-row">
         <input type="file" id="fileInput" accept="video/*" />
         <button id="analyzeBtn" disabled>Analyze</button>
+        <span style="opacity:.7">or</span>
+        <input type="file" id="jsonInput" accept="application/json" title="Load analysis JSON" />
       </div>
       <video id="video" playsinline controls></video>
     </section>
@@ -28,13 +32,14 @@
     </section>
 
     <section class="card actions">
-      <label class="opt"><input type="checkbox" id="optFrameStrip" checked /> Include frame strip (address • top • impact)</label>
+      <label class="opt"><input type="checkbox" id="optFrameStrip" checked /> Frame strip (address • top • impact)</label>
       <label class="opt"><input type="checkbox" id="optHiRes" /> Hi-Res PNG (2×)</label>
     </section>
 
     <section class="card actions">
       <button id="exportPngBtn" disabled>Export PNG Report</button>
       <button id="sharePngBtn" disabled>Share PNG</button>
+      <button id="exportCsvBtn" disabled>Export CSV</button>
       <button id="exportJsonBtn" disabled>Export Analysis JSON</button>
       <a id="downloadLink" class="hidden" download>Download</a>
     </section>
@@ -44,6 +49,10 @@
     <small>Checkpoint: Sept 17, 2025 · Branch: feat/recover · Coaching: badges + overlays • PNG: frame strip + 2× option • Mobile: responsive + Share</small>
   </footer>
 
-  <script src="./app.js?v=20250917-04"></script>
+  <script>
+    // Fallback build tag; app.js will load public/build.json and overwrite.
+    window.__BUILD__ = window.__BUILD__ || 'dev';
+  </script>
+  <script src="./app.js?v=20250917-06"></script>
 </body>
 </html>

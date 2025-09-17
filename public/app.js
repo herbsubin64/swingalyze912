@@ -1,13 +1,18 @@
-// Swingalyze — robust client: retries, contract banner, badges, overlays, JSON export
+// Swingalyze — robust client: retries, contract banner, badges, overlays, JSON/CSV export
 // PNG options: frame strip (address•top•impact) and Hi-Res (2×)
+// Improvements: show build tag in header; revoke blob URLs to prevent leaks.
 
 const els = {
   file: document.getElementById('fileInput'),
+  json: document.getElementById('jsonInput'),
   analyze: document.getElementById('analyzeBtn'),
   exportPngBtn: document.getElementById('exportPngBtn'),
+  sharePngBtn: document.getElementById('sharePngBtn'),
+  exportCsvBtn: document.getElementById('exportCsvBtn'),
   exportJsonBtn: document.getElementById('exportJsonBtn'),
   downloadLink: document.getElementById('downloadLink'),
   statusDot: document.getElementById('statusDot'),
+  buildTag: document.getElementById('buildTag'),
   video: document.getElementById('video'),
   results: document.getElementById('results'),
   optFrameStrip: document.getElementById('optFrameStrip'),
@@ -17,16 +22,36 @@ const els = {
 let analysis = null;
 let videoBlobUrl = null;
 let ranges = null;
+let lastPngBlob = null;
+let lastDownloadUrl = null;
+let buildTag = (typeof window!=='undefined' && window.__BUILD__) ? window.__BUILD__ : 'dev';
 
 init();
 
 async function init(){
-  await Promise.all([checkStatus(), loadRanges()]);
+  await Promise.all([checkStatus(), loadRanges(), loadBuildTag()]);
+  // show build tag in header
+  try{ if (els.buildTag) els.buildTag.textContent = String(buildTag || 'dev'); }catch{}
+  // Mobile-friendly defaults: disable Hi-Res on small screens (less memory)
+  try{
+    if (window.matchMedia && window.matchMedia('(max-width: 640px)').matches) {
+      const hi = document.getElementById('optHiRes');
+      if (hi) hi.checked = false;
+    }
+  }catch{}
 }
 
 // ---------- Status ----------
 async function checkStatus() { try { const r = await fetch('/api/status',{cache:'no-store'}); setDot(r.ok); } catch { setDot(false);} }
 function setDot(up){ if(!els.statusDot) return; els.statusDot.classList.toggle('online', !!up); els.statusDot.classList.toggle('offline', !up); }
+
+// ---------- Build tag ----------
+async function loadBuildTag(){
+  try {
+    const r = await fetch('./build.json', {cache:'no-store'});
+    if (r.ok) { const j = await r.json(); if (typeof j?.sha === 'string') buildTag = j.sha.slice(0,7); }
+  } catch { /* fallback 'dev' already set */ }
+}
 
 // ---------- Ranges ----------
 async function loadRanges(){ try{ const r=await fetch('./ranges.json',{cache:'no-store'}); ranges=r.ok?await r.json():{}; }catch{ ranges={}; } }
@@ -35,8 +60,12 @@ async function loadRanges(){ try{ const r=await fetch('./ranges.json',{cache:'no
 function setAnalyzeEnabled(on){ if(els.analyze) els.analyze.disabled=!on; }
 function setExportEnabled(on){
   if(els.exportPngBtn) els.exportPngBtn.disabled=!on;
+  if(els.sharePngBtn) els.sharePngBtn.disabled=!(on && ('share' in navigator));
+  if(els.exportCsvBtn) els.exportCsvBtn.disabled=!on;
   if(els.exportJsonBtn) els.exportJsonBtn.disabled=!on;
   if(els.downloadLink) els.downloadLink.classList.add('hidden');
+  // revoke any previous one-shot download URL
+  revokeLastDownloadUrl();
 }
 
 // ---------- File load ----------
@@ -47,6 +76,26 @@ els.file?.addEventListener('change', () => {
   videoBlobUrl = URL.createObjectURL(file);
   els.video.src = videoBlobUrl;
   setAnalyzeEnabled(true); setExportEnabled(false); analysis = null;
+});
+
+// ---------- Load analysis JSON (offline dev path) ----------
+els.json?.addEventListener('change', async () => {
+  const file = els.json.files?.[0]; if (!file) return;
+  try {
+    const text = await file.text();
+    const raw = JSON.parse(text);
+    analysis = normalize(raw);
+    renderBanner(validateContract(analysis));
+    const baseCoach = Array.isArray(analysis.coaching) ? analysis.coaching : [];
+    const extra = generateCoaching(analysis, (ranges?.default || ranges || {}));
+    analysis.coaching = dedupe(toTips([...baseCoach, ...extra]));
+    els.results.innerHTML = '';
+    renderResults(analysis);
+    setExportEnabled(true);
+  } catch (e) {
+    showError('Invalid analysis JSON: ' + (e?.message || e));
+    setExportEnabled(false);
+  }
 });
 
 // ---------- Analyze (timeout + retry + mapped errors) ----------
@@ -61,14 +110,14 @@ els.analyze?.addEventListener('click', async () => {
     analysis = normalize(raw);
 
     // Contract check → banner
-    const shape = validateContract(analysis);
-    renderBanner(shape);
+    renderBanner(validateContract(analysis));
 
     // Coaching: merge generator + normalize to strings + dedupe
     const baseCoach = Array.isArray(analysis.coaching) ? analysis.coaching : [];
     const extra = generateCoaching(analysis, (ranges?.default || ranges || {}));
     analysis.coaching = dedupe(toTips([...baseCoach, ...extra]));
 
+    els.results.innerHTML = '';
     renderResults(analysis);
     setExportEnabled(true);
   } catch (e) {
@@ -82,26 +131,77 @@ els.analyze?.addEventListener('click', async () => {
 
 // ---------- Exports ----------
 els.exportPngBtn?.addEventListener('click', async () => {
-  if (!analysis || !els.video?.src) return;
+  if (!analysis || !els.video) return;
   const btn = els.exportPngBtn; btn.textContent='Rendering…'; btn.disabled=true;
   try {
     const opts = { includeStrip: !!els.optFrameStrip?.checked, scale: els.optHiRes?.checked ? 2 : 1 };
-    const pngBlob = await renderReportPNG(analysis, els.video, (ranges?.default || ranges || {}), opts);
-    const url = URL.createObjectURL(pngBlob);
-    els.downloadLink.href = url;
-    els.downloadLink.download = `Swingalyze-Report${opts.scale===2?'-2x':''}.png`;
-    els.downloadLink.classList.remove('hidden'); els.downloadLink.click();
+    lastPngBlob = await renderReportPNG(analysis, els.video, (ranges?.default || ranges || {}), opts);
+    const url = URL.createObjectURL(lastPngBlob);
+    replaceDownloadUrl(url, `Swingalyze-Report${opts.scale===2?'-2x':''}.png`);
   } catch(e){ showError(e); }
   finally { btn.textContent='Export PNG Report'; btn.disabled=false; }
 });
 
+// One-tap Share (mobile). Falls back to Export if not supported.
+els.sharePngBtn?.addEventListener('click', async () => {
+  if (!analysis || !('share' in navigator)) { els.exportPngBtn?.click(); return; }
+  try{
+    if (!lastPngBlob) {
+      const opts = { includeStrip: !!els.optFrameStrip?.checked, scale: els.optHiRes?.checked ? 2 : 1 };
+      lastPngBlob = await renderReportPNG(analysis, els.video, (ranges?.default || ranges || {}), opts);
+    }
+    const file = new File([lastPngBlob], 'Swingalyze-Report.png', { type: 'image/png' });
+    await navigator.share({ files: [file], title: 'Swingalyze — Coaching Report', text: 'Swing report' });
+  } catch(e){
+    // graceful fallback to download
+    const url = URL.createObjectURL(lastPngBlob);
+    replaceDownloadUrl(url, 'Swingalyze-Report.png');
+  }
+});
+
 els.exportJsonBtn?.addEventListener('click', () => {
   if (!analysis) return;
-  const payload = { analysis, ranges: (ranges?.default || ranges || {}) };
+  const payload = { analysis, ranges: (ranges?.default || ranges || {}), build: buildTag, exported_at: new Date().toISOString() };
   const url = URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)],{type:'application/json'}));
-  els.downloadLink.href=url; els.downloadLink.download='Swingalyze-Analysis.json';
-  els.downloadLink.classList.remove('hidden'); els.downloadLink.click();
+  replaceDownloadUrl(url, 'Swingalyze-Analysis.json');
 });
+
+els.exportCsvBtn?.addEventListener('click', () => {
+  if (!analysis) return;
+  const t = analysis?.tempo || {}, ang = analysis?.angles || {}, st = analysis?.stance || {};
+  const rows = [
+    ['field','value'],
+    ['tempo.ratio', safeNum(t.ratio)],
+    ['tempo.backswing', safeNum(t.backswing)],
+    ['tempo.downswing', safeNum(t.downswing)],
+    ['angles.spine_impact_deg', safeNum(ang.spine_impact_deg)],
+    ['angles.shaft_impact_deg', safeNum(ang.shaft_impact_deg)],
+    ['stance.impact_fraction', safeNum(st.impact_fraction)],
+    ['generated_at', new Date().toISOString()],
+    ['build', buildTag]
+  ];
+  const coach = toTips(analysis.coaching).map((c,i)=>[`coaching[${i}]`, c]);
+  const all = rows.concat(coach);
+  const csv = all.map(r => r.map(csvEsc).join(',')).join('\r\n');
+  const url = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));
+  replaceDownloadUrl(url, 'Swingalyze-Report.csv');
+});
+
+function csvEsc(v){ const s=String(v??''); return /[",\n]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s; }
+function safeNum(v){ const n=Number(v); return (Number.isFinite(n)? n : ''); }
+
+function replaceDownloadUrl(url, filename){
+  revokeLastDownloadUrl();
+  lastDownloadUrl = url;
+  els.downloadLink.href = url;
+  els.downloadLink.download = filename;
+  els.downloadLink.classList.remove('hidden');
+  els.downloadLink.click();
+}
+function revokeLastDownloadUrl(){
+  try{ if (lastDownloadUrl) URL.revokeObjectURL(lastDownloadUrl); }catch{}
+  lastDownloadUrl = null;
+}
 
 // ---------- Networking helpers ----------
 async function fetchWithRetry(url, options={}, {attempts=2, timeoutMs=60000}={}){
@@ -260,8 +360,22 @@ async function renderReportPNG(a, video, rs, opts={}) {
 
   const impactT = pickImpactTime(a);
   const imgRect = { x: pad, y: pad+90, w: W - pad*2, h: 540 };
-  const drawn = await drawVideoFrame(ctx, video, impactT, imgRect);
-  drawOverlaysOnImpact(ctx, a, drawn);
+  let drewFrame = false, drawn = {dx:imgRect.x,dy:imgRect.y,dw:imgRect.w,dh:imgRect.h};
+  try {
+    if (video && video.readyState >= 2) {
+      drawn = await drawVideoFrame(ctx, video, impactT, imgRect);
+      drewFrame = true;
+    }
+  } catch {}
+  if (!drewFrame) {
+    ctx.save();
+    ctx.fillStyle = '#000'; ctx.fillRect(imgRect.x, imgRect.y, imgRect.w, imgRect.h);
+    ctx.fillStyle = '#9ca3af'; ctx.font = '16px Inter, system-ui, sans-serif';
+    ctx.fillText('No video loaded — rendering metrics & coaching only', imgRect.x + 20, imgRect.y + 30);
+    ctx.restore();
+  } else {
+    drawOverlaysOnImpact(ctx, a, drawn);
+  }
 
   // Metrics & coaching
   const leftX = pad; let y = imgRect.y + imgRect.h + 40; const line = 30;
@@ -283,7 +397,7 @@ async function renderReportPNG(a, video, rs, opts={}) {
   else for (const tip of coaching.slice(0, 10)) { ry = drawBullet(ctx, rightX, ry, tip, W - rightX - pad, line); if (ry > (includeStrip ? H - pad - 210 : H - pad - 60)) break; }
 
   // Frame strip
-  if (includeStrip) {
+  if (includeStrip && video && video.readyState >= 2) {
     const stripY = H - 220;
     await drawFrameStrip(ctx, video, a, { x: pad, y: stripY, w: W - pad*2, h: 160 });
     ctx.globalAlpha = 0.8; ctx.font = '14px Inter, system-ui, sans-serif';
@@ -292,7 +406,7 @@ async function renderReportPNG(a, video, rs, opts={}) {
   }
 
   ctx.globalAlpha = 0.8; ctx.font = '16px Inter, system-ui, sans-serif';
-  ctx.fillText(`Checkpoint: 2025-09-17 · Branch: feat/recover · Exported as PNG (client-side${scale>1?', '+scale+'×':''})`, pad, H - 16);
+  ctx.fillText(`Checkpoint: 2025-09-17 · Branch: feat/recover · Build: ${buildTag} · PNG (client-side${scale>1?', '+scale+'×':''})`, pad, H - 16);
   ctx.globalAlpha = 1;
 
   return await new Promise((resolve, reject) => { canvas.toBlob(b => b ? resolve(b) : reject('PNG encode failed'), 'image/png', 0.95); });
