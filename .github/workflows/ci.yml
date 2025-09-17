@@ -10,17 +10,33 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+
+      # Build tag consumed by app.js (PNG footer traceability)
+      - name: Write build tag
+        run: |
+          mkdir -p public
+          echo "{\"sha\":\"$(git rev-parse HEAD)\"}" > public/build.json
+          cat public/build.json
+
+      - name: Verify build tag file
+        run: node scripts/verify-buildtag.mjs
+
       - name: Contract check (golden)
         run: node scripts/verify-analyze-shape.mjs fixtures/golf1.golden.json
+
       - name: Validate ranges profiles
         run: node scripts/validate-ranges.mjs
+
       - name: Coaching generator unit check
         run: node scripts/test-coaching-generator.mjs
-      - name: Static smoke (no server)
+
+      - name: Static smoke (UI controls present)
         run: node scripts/smoke-static.mjs
+
       - name: Optional live smoke (skips if env missing)
         env:
           ANALYZE_URL: ${{ secrets.ANALYZE_URL }}
