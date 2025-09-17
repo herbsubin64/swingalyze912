@@ -1,181 +1,42 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Swingalyze — Coaching v1 (API-first)</title>
-<style>
-  :root{color-scheme:dark}
-  body{margin:0;background:#0e1116;color:#e8eef7;font:14px/1.45 system-ui,Segoe UI,Roboto,Arial}
-  header{position:sticky;top:0;background:#121826;border-bottom:1px solid #273244;padding:10px 12px;z-index:2}
-  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-  .btn{padding:6px 10px;border:1px solid #2a3344;background:#161c28;color:#e8eef7;border-radius:6px;cursor:pointer}
-  main{padding:12px}
-  #stage{position:relative;max-width:720px;margin-inline:auto}
-  video{width:100%;display:block;background:#000;border-radius:10px;object-fit:contain;transform-origin:center center}
-  canvas{position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none}
-  .panel{background:#121826;border:1px solid #273244;border-radius:10px;padding:12px;margin:12px auto;max-width:820px}
-  .cards{display:grid;gap:10px}
-  .card{background:#141a26;border:1px solid #2a3344;border-radius:10px;padding:10px}
-  .ok{border-color:#1f6d2f}
-  .warn{border-color:#7d5d15}
-  .bad{border-color:#8b3333}
-  .small{font-size:12px;opacity:.8}
-</style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Swingalyze — Coaching (Checkpoint 2025-09-17)</title>
+  <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
-<header>
-  <div class="row">
-    <strong>Swingalyze — Coaching v1</strong>
-    <span class="small" id="status">Ready</span>
-    <span class="small" id="meta"></span>
-  </div>
-  <div class="row">
-    <select id="fileSel">
-      <option value="golf1.mp4">golf1.mp4</option>
-      <option value="upload.mp4">upload.mp4</option>
-    </select>
-    <select id="clubSel">
-      <option value="Driver" selected>Driver</option>
-      <option value="Iron7">Iron 7</option>
-    </select>
-    <button class="btn" id="btnAnalyze">Analyze (server)</button>
-    <label class="btn">Fit
-      <select id="fitSel">
-        <option value="contain" selected>contain</option>
-        <option value="cover">cover</option>
-      </select>
-    </label>
-    <label class="btn">Zoom <input id="zoom" type="range" min="1" max="2" step="0.05" value="1"></label>
-  </div>
-</header>
+  <header class="topbar">
+    <h1>Swingalyze — API-first Coaching</h1>
+    <div id="statusDot" class="dot offline" title="API status"></div>
+  </header>
 
-<main>
-  <section id="stage">
-    <video id="player" playsinline muted preload="metadata" controls></video>
-    <canvas id="overlay"></canvas>
-  </section>
+  <main class="container">
+    <section class="card">
+      <h2>1) Load a video</h2>
+      <div class="upload-row">
+        <input type="file" id="fileInput" accept="video/*" />
+        <button id="analyzeBtn" disabled>Analyze</button>
+      </div>
+      <video id="video" playsinline controls></video>
+    </section>
 
-  <section class="panel">
-    <h3 style="margin:0 0 8px 0;">Coaching</h3>
-    <div class="cards" id="coaching"></div>
-  </section>
+    <section class="card">
+      <h2>2) Results</h2>
+      <div id="results" class="results"></div>
+    </section>
 
-  <section class="panel">
-    <h3 style="margin:0 0 8px 0;">Metrics</h3>
-    <div class="small" id="metrics"></div>
-  </section>
-</main>
+    <section class="card actions">
+      <button id="exportBtn" disabled>Export PNG Report</button>
+      <a id="downloadLink" class="hidden" download="Swingalyze-Report.png">Download report</a>
+    </section>
+  </main>
 
-<script>
-const $ = s=>document.querySelector(s);
-const player = $('#player');
-const canvas = $('#overlay');
-const ctx = canvas.getContext('2d');
+  <footer class="foot">
+    <small>Checkpoint: Sept 17, 2025 · Branch: feat/recover · Focus: API-first coaching → PNG report</small>
+  </footer>
 
-function setStatus(s){ $('#status').textContent=s; }
-function fitOverlay(){
-  canvas.width = player.clientWidth; canvas.height = player.clientHeight;
-}
-
-function rad(d){ return d*Math.PI/180; }
-function drawOverlay(res){
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-  if (!res || !res.angles) return;
-  const W = canvas.width, H = canvas.height;
-  const baseX = Math.round(W*0.75);
-  const baseY = Math.round(H*0.70);
-  const L     = Math.round(Math.min(W,H)*0.25);
-  ctx.lineWidth = 4; ctx.font='12px system-ui';
-
-  function draw(name, val, x, y, color){
-    if (val==null || !Number.isFinite(val)) {
-      ctx.fillStyle='#8ea2c0'; ctx.fillText(`${name} –`, x+6,y-6); return;
-    }
-    const th = rad(180 - val);
-    const x2 = x + Math.cos(th)*L;
-    const y2 = y - Math.sin(th)*L;
-    ctx.strokeStyle = color; ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x2,y2); ctx.stroke();
-    ctx.fillStyle = '#dce6ff'; ctx.fillText(`${name} ${val.toFixed(1)}°`, x2+6, y2-6);
-  }
-  draw('Spine@Top',    res.angles.spineTiltTop,    baseX, baseY,            '#16a34a');
-  draw('Spine@Impact', res.angles.spineTiltImpact, baseX, baseY+H*0.12,     '#22c55e');
-  draw('Shaft@Top',    res.angles.shaftTop,        baseX-W*0.18, baseY,     '#60a5fa');
-  draw('Shaft@Impact', res.angles.shaftImpact,     baseX-W*0.18, baseY+H*0.12,'#93c5fd');
-
-  // stance lines if present
-  const st = res.stance || {};
-  if (st.address?.frac!=null) {
-    const y = Math.round(H*st.address.frac);
-    ctx.strokeStyle='#38bdf8'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(10,y); ctx.lineTo(W-10,y); ctx.stroke();
-    ctx.fillStyle='#38bdf8'; ctx.fillText('Stance@Address', 12, y-6);
-  }
-  if (st.impact?.frac!=null) {
-    const y = Math.round(H*st.impact.frac);
-    ctx.strokeStyle='#fb7185'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(10,y); ctx.lineTo(W-10,y); ctx.stroke();
-    ctx.fillStyle='#fb7185'; ctx.fillText('Stance@Impact', 12, y-6);
-  }
-}
-
-function renderCoaching(list){
-  const c = $('#coaching'); c.innerHTML='';
-  (list||[]).forEach(item=>{
-    const div = document.createElement('div');
-    div.className = `card ${item.level}`;
-    div.innerHTML = `<strong>${item.title}</strong><div class="small">${item.text}</div>`;
-    c.appendChild(div);
-  });
-}
-
-function renderMetrics(j){
-  const m = $('#metrics');
-  const k=j.keyframes||{}, t=j.tempo||{}, a=j.angles||{}, s=j.series||{}, st=j.stance||{};
-  const f = v => Number.isFinite(v)? v.toFixed(2): '–';
-  m.innerHTML = `
-    Address ${f(k.addressT)}s • Club Parallel ${f(k.clubParallelT)}s • Top ${f(k.topT)}s • Impact ${f(k.impactT)}s • Follow ${f(k.followT)}s<br/>
-    Backswing ${f(k.backswing)}s • Downswing ${f(k.downswing)}s • Ratio ${f(k.ratio)}<br/>
-    Tempo: Back ${f(t.backswing)}s • Ratio ${f(t.ratio)} • Quality ${t.qualityNote??'–'} • Conf ${f(t.confidence)}<br/>
-    Angles: SpineTop ${f(a?.spineTiltTop)}° • SpineImp ${f(a?.spineTiltImpact)}° • ShaftTop ${f(a?.shaftTop)}° • ShaftImp ${f(a?.shaftImpact)}°<br/>
-    Series: samples ${s?.samples ?? '–'} • step ${s?.stepSec ?? '–'} • stance A ${st?.address?.frac ?? '–'} • stance I ${st?.impact?.frac ?? '–'}
-  `;
-}
-
-async function analyze(){
-  setStatus('Analyzing…');
-  const video = $('#fileSel').value;
-  const club  = $('#clubSel').value;
-  const j = await fetch('/api/analyze', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ video, club })
-  }).then(r=>r.json()).catch(e=>({ok:false,error:String(e)}));
-  if(!j.ok){ setStatus('Analyze failed: '+(j.error||'unknown')); return; }
-
-  // load video for viewing
-  player.src = (video==='upload.mp4') ? '/uploads/upload.mp4' : '/public/golf1.mp4';
-  player.load();
-
-  renderMetrics(j);
-  renderCoaching(j.coaching);
-  drawOverlay(j);
-  setStatus('Analysis OK');
-}
-
-function fitChanged(){ player.style.objectFit = $('#fitSel').value; }
-function zoomChanged(){ player.style.transform = `scale(${Number($('#zoom').value)})`; }
-
-player.addEventListener('loadedmetadata', fitOverlay);
-window.addEventListener('resize', fitOverlay);
-$('#fitSel').addEventListener('change', fitChanged);
-$('#zoom').addEventListener('input', zoomChanged);
-$('#btnAnalyze').addEventListener('click', analyze);
-
-(function boot(){
-  // default video (if present)
-  player.src = '/public/golf1.mp4';
-  player.load();
-  fitOverlay();
-  fitChanged(); zoomChanged();
-})();
-</script>
+  <script src="./app.js"></script>
 </body>
 </html>
