@@ -15,7 +15,7 @@ jobs:
         with:
           node-version: '20'
 
-      # Build tag consumed by app.js (PNG footer traceability)
+      # Build tag for PNG footer
       - name: Write build tag
         run: |
           mkdir -p public
@@ -36,11 +36,14 @@ jobs:
       - name: Validate metric bounds (ALL goldens)
         run: node scripts/validate-metrics-bounds.mjs
 
+      - name: Validate ranges vs bounds/tolerances
+        run: node scripts/validate-ranges-vs-bounds.mjs
+
       - name: Validate ranges profiles
         run: node scripts/validate-ranges.mjs
 
-      - name: Coaching generator unit check
-        run: node scripts/test-coaching-generator.mjs
+      - name: Coaching normalization test
+        run: node scripts/test-coaching-normalization.mjs
 
       - name: Static smoke (UI controls present)
         run: node scripts/smoke-static.mjs
