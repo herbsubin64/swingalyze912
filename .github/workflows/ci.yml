@@ -1,5 +1,4 @@
 name: swingalyze-ci
-
 on:
   push:
     branches: [ feat/recover ]
@@ -7,17 +6,23 @@ on:
     branches: [ feat/recover ]
 
 jobs:
-  contract-and-coaching:
+  checks:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Node (LTS)
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Verify analyze contract against golden
+      - name: Contract check (golden)
         run: node scripts/verify-analyze-shape.mjs fixtures/golf1.golden.json
       - name: Validate ranges profiles
         run: node scripts/validate-ranges.mjs
       - name: Coaching generator unit check
         run: node scripts/test-coaching-generator.mjs
+      - name: Static smoke (no server)
+        run: node scripts/smoke-static.mjs
+      - name: Optional live smoke (skips if env missing)
+        env:
+          ANALYZE_URL: ${{ secrets.ANALYZE_URL }}
+          ANALYZE_VIDEO: ${{ secrets.ANALYZE_VIDEO }}
+        run: node scripts/smoke-live.mjs
