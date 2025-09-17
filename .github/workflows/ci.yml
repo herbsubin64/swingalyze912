@@ -15,7 +15,7 @@ jobs:
         with:
           node-version: '20'
 
-      # Build tag for PNG footer traceability
+      # Build tag consumed by app.js (PNG footer traceability)
       - name: Write build tag
         run: |
           mkdir -p public
@@ -32,6 +32,9 @@ jobs:
             echo "Checking $f"
             node scripts/verify-analyze-shape.mjs "$f"
           done
+
+      - name: Validate metric bounds (ALL goldens)
+        run: node scripts/validate-metrics-bounds.mjs
 
       - name: Validate ranges profiles
         run: node scripts/validate-ranges.mjs

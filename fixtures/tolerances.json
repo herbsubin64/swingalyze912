@@ -1,10 +1,8 @@
 {
   "tempo.ratio": 0.25,
-  "tempo.backswing": 0.15,
-  "tempo.downswing": 0.10,
-
-  "angles.spine_impact_deg": 5.0,
-  "angles.shaft_impact_deg": 5.0,
-
-  "stance.impact_fraction": 0.06
+  "tempo.backswing": 0.20,
+  "tempo.downswing": 0.12,
+  "angles.spine_impact_deg": 2.0,
+  "angles.shaft_impact_deg": 2.0,
+  "stance.impact_fraction": 0.08
 }
