@@ -25,39 +25,24 @@ async function init(){
 }
 
 // ---------- Status ----------
-async function checkStatus() {
-  try { const r = await fetch('/api/status', {cache:'no-store'}); setDot(r.ok); }
-  catch { setDot(false); }
-}
-function setDot(up){
-  if(!els.statusDot) return;
-  els.statusDot.classList.toggle('online', !!up);
-  els.statusDot.classList.toggle('offline', !up);
-}
+async function checkStatus() { try { const r = await fetch('/api/status',{cache:'no-store'}); setDot(r.ok); } catch { setDot(false);} }
+function setDot(up){ if(!els.statusDot) return; els.statusDot.classList.toggle('online', !!up); els.statusDot.classList.toggle('offline', !up); }
 
 // ---------- Ranges ----------
-async function loadRanges() {
-  try { const r = await fetch('./ranges.json', {cache:'no-store'}); ranges = r.ok ? await r.json() : {}; }
-  catch { ranges = {}; }
-}
+async function loadRanges(){ try{ const r=await fetch('./ranges.json',{cache:'no-store'}); ranges=r.ok?await r.json():{}; }catch{ ranges={}; } }
 
 // ---------- UI enable/disable ----------
-function setAnalyzeEnabled(on){ els.analyze && (els.analyze.disabled = !on); }
+function setAnalyzeEnabled(on){ if(els.analyze) els.analyze.disabled=!on; }
 function setExportEnabled(on){
-  els.exportPngBtn && (els.exportPngBtn.disabled = !on);
-  els.exportJsonBtn && (els.exportJsonBtn.disabled = !on);
-  els.downloadLink && els.downloadLink.classList.add('hidden');
+  if(els.exportPngBtn) els.exportPngBtn.disabled=!on;
+  if(els.exportJsonBtn) els.exportJsonBtn.disabled=!on;
+  if(els.downloadLink) els.downloadLink.classList.add('hidden');
 }
 
 // ---------- File load ----------
 els.file?.addEventListener('change', () => {
-  const file = els.file.files?.[0];
-  if(!file) return;
-  if (!file.type.startsWith('video/')) {
-    showError('Selected file is not a video.');
-    setAnalyzeEnabled(false); setExportEnabled(false);
-    return;
-  }
+  const file = els.file.files?.[0]; if(!file) return;
+  if (!file.type.startsWith('video/')) { showError('Selected file is not a video.'); setAnalyzeEnabled(false); setExportEnabled(false); return; }
   if (videoBlobUrl) URL.revokeObjectURL(videoBlobUrl);
   videoBlobUrl = URL.createObjectURL(file);
   els.video.src = videoBlobUrl;
@@ -79,7 +64,7 @@ els.analyze?.addEventListener('click', async () => {
     const shape = validateContract(analysis);
     renderBanner(shape);
 
-    // Coaching: merge generator + normalize to strings
+    // Coaching: merge generator + normalize to strings + dedupe
     const baseCoach = Array.isArray(analysis.coaching) ? analysis.coaching : [];
     const extra = generateCoaching(analysis, (ranges?.default || ranges || {}));
     analysis.coaching = dedupe(toTips([...baseCoach, ...extra]));
@@ -100,10 +85,7 @@ els.exportPngBtn?.addEventListener('click', async () => {
   if (!analysis || !els.video?.src) return;
   const btn = els.exportPngBtn; btn.textContent='Rendering…'; btn.disabled=true;
   try {
-    const opts = {
-      includeStrip: !!els.optFrameStrip?.checked,
-      scale: els.optHiRes?.checked ? 2 : 1
-    };
+    const opts = { includeStrip: !!els.optFrameStrip?.checked, scale: els.optHiRes?.checked ? 2 : 1 };
     const pngBlob = await renderReportPNG(analysis, els.video, (ranges?.default || ranges || {}), opts);
     const url = URL.createObjectURL(pngBlob);
     els.downloadLink.href = url;
@@ -126,17 +108,11 @@ async function fetchWithRetry(url, options={}, {attempts=2, timeoutMs=60000}={})
   let last;
   for (let i=0;i<attempts;i++){
     try{
-      const ctl=new AbortController();
-      const t=setTimeout(()=>ctl.abort(), timeoutMs);
-      const r=await fetch(url, {...options, signal: ctl.signal});
-      clearTimeout(t);
+      const ctl=new AbortController(); const t=setTimeout(()=>ctl.abort(), timeoutMs);
+      const r=await fetch(url, {...options, signal: ctl.signal}); clearTimeout(t);
       if (r.status>=500 && r.status<600 && i<attempts-1){ await wait(400*(i+1)); continue; }
       return r;
-    }catch(e){
-      last=e;
-      if(i===attempts-1) throw new Error('Network error contacting analyzer.');
-      await wait(300*(i+1));
-    }
+    }catch(e){ last=e; if(i===attempts-1) throw new Error('Network error contacting analyzer.'); await wait(300*(i+1)); }
   }
   throw last || new Error('Request failed.');
 }
@@ -208,11 +184,7 @@ function code(s){ return `<pre class="code">${escapeHtml(s)}</pre>`; }
 function escapeHtml(s){ return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
 
 // Robust number formatting: show "–" when null/NaN/∞
-function fmt(v){
-  const n = Number(v);
-  if (v==null || !Number.isFinite(n)) return '–';
-  return String(Math.round(n*100)/100);
-}
+function fmt(v){ const n=Number(v); if (v==null || !Number.isFinite(n)) return '–'; return String(Math.round(n*100)/100); }
 
 // ---------- Coaching helpers ----------
 function toTips(arr){
@@ -220,22 +192,20 @@ function toTips(arr){
   const tips = arr.map(x=>{
     if (typeof x === 'string') return x.trim();
     if (x && typeof x === 'object') {
-      // common fields in analyzers
       const s = x.text || x.message || x.tip || x.note || x.reason;
       if (typeof s === 'string') return s.trim();
-      // try "label: advice"
       const label = (typeof x.label==='string' && x.label.trim()) || '';
       const advice = (typeof x.advice==='string' && x.advice.trim()) || '';
       if (label || advice) return `${label}${label&&advice?': ':''}${advice}`.trim();
-      // last resort: stringify safely
       try { return JSON.stringify(x); } catch { return String(x); }
     }
     return String(x);
   }).filter(Boolean);
   return tips;
 }
+function dedupe(arr){ return Array.from(new Set((arr||[]).filter(Boolean).map(v=>String(v).trim()))); }
 
-// ---------- Normalization, ranges, coaching ----------
+// ---------- Normalization, ranges ----------
 function normalize(obj){
   const out = {
     keyframes: obj.keyframes ?? obj.__KEYFRAMES__ ?? {},
@@ -255,12 +225,8 @@ function normalize(obj){
 function assess(value, key, rs){
   const n = Number(value);
   if (!Number.isFinite(n) || !rs || !rs[key]) return { badge:'', level:'na' };
-  const r=rs[key];
-  const inGood=n>=r.good[0]&&n<=r.good[1];
-  const inWarn=n>=r.warn[0]&&n<=r.warn[1];
-  if (inGood) return { badge:'ok', level:'ok' };
-  if (inWarn) return { badge:'warn', level:'warn' };
-  return { badge:'bad', level:'bad' };
+  const r=rs[key], inGood=n>=r.good[0]&&n<=r.good[1], inWarn=n>=r.warn[0]&&n<=r.warn[1];
+  if (inGood) return { badge:'ok', level:'ok' }; if (inWarn) return { badge:'warn', level:'warn' }; return { badge:'bad', level:'bad' };
 }
 
 function generateCoaching(a, rs){
@@ -272,11 +238,8 @@ function generateCoaching(a, rs){
   push(ang.shaft_impact_deg,'angles.shaft_impact_deg','Shaft angle @ impact','Hands ahead; compress the ball');
   push(st.impact_fraction,'stance.impact_fraction','Stance width','Match stance to club for balance & turn');
   function push(val,key,label,cue){
-    const n = Number(val);
-    if(!Number.isFinite(n) || !rs[key]) return;
-    const s=assess(n,key,rs);
-    if(s.level==='bad') tips.push(`${label} out of range: ${fmt(n)}. ${cue}`);
-    else if(s.level==='warn') tips.push(`${label} borderline: ${fmt(n)}. ${cue}`);
+    const n=Number(val); if(!Number.isFinite(n) || !rs[key]) return;
+    const s=assess(n,key,rs); if(s.level==='bad') tips.push(`${label} out of range: ${fmt(n)}. ${cue}`); else if(s.level==='warn') tips.push(`${label} borderline: ${fmt(n)}. ${cue}`);
   }
   return tips;
 }
@@ -286,17 +249,14 @@ async function renderReportPNG(a, video, rs, opts={}) {
   const scale = Math.max(1, Math.min(3, Number(opts.scale)||1));
   const includeStrip = !!opts.includeStrip;
 
-  // Base logical size; we’ll scale canvas for Hi-Res
   const W = 1200, H = includeStrip ? 1780 : 1600, pad = 40;
   const canvas = document.createElement('canvas'); canvas.width=W*scale; canvas.height=H*scale;
   const ctx = canvas.getContext('2d'); ctx.scale(scale, scale);
 
   ctx.fillStyle = '#0b0c10'; ctx.fillRect(0,0,W,H);
   ctx.fillStyle = '#e5e7eb';
-  ctx.font = 'bold 40px Inter, system-ui, sans-serif';
-  ctx.fillText('Swingalyze — Coaching Report', pad, pad+20);
-  ctx.font = '18px Inter, system-ui, sans-serif';
-  ctx.fillText(new Date().toLocaleString(), pad, pad+50);
+  ctx.font = 'bold 40px Inter, system-ui, sans-serif'; ctx.fillText('Swingalyze — Coaching Report', pad, pad+20);
+  ctx.font = '18px Inter, system-ui, sans-serif'; ctx.fillText(new Date().toLocaleString(), pad, pad+50);
 
   const impactT = pickImpactTime(a);
   const imgRect = { x: pad, y: pad+90, w: W - pad*2, h: 540 };
@@ -322,7 +282,7 @@ async function renderReportPNG(a, video, rs, opts={}) {
   if (coaching.length === 0) ctx.fillText('– No tips provided –', rightX, ry);
   else for (const tip of coaching.slice(0, 10)) { ry = drawBullet(ctx, rightX, ry, tip, W - rightX - pad, line); if (ry > (includeStrip ? H - pad - 210 : H - pad - 60)) break; }
 
-  // Frame strip (address • top • impact)
+  // Frame strip
   if (includeStrip) {
     const stripY = H - 220;
     await drawFrameStrip(ctx, video, a, { x: pad, y: stripY, w: W - pad*2, h: 160 });
@@ -335,158 +295,94 @@ async function renderReportPNG(a, video, rs, opts={}) {
   ctx.fillText(`Checkpoint: 2025-09-17 · Branch: feat/recover · Exported as PNG (client-side${scale>1?', '+scale+'×':''})`, pad, H - 16);
   ctx.globalAlpha = 1;
 
-  return await new Promise((resolve, reject) => {
-    canvas.toBlob(b => b ? resolve(b) : reject('PNG encode failed'), 'image/png', 0.95);
-  });
+  return await new Promise((resolve, reject) => { canvas.toBlob(b => b ? resolve(b) : reject('PNG encode failed'), 'image/png', 0.95); });
 }
 
 // ---------- Visual helpers ----------
 async function drawFrameStrip(ctx, video, a, rect) {
-  const { x, y, w, h } = rect;
-  const gap = 12;
-  const cellW = (w - gap*2) / 3;
-  const cellH = h;
-  const times = pickFrameTimes(a);
-  const labels = ['address','top','impact'];
-  const current = video.currentTime;
-
-  for (let i=0; i<3; i++){
+  const { x, y, w, h } = rect, gap = 12, cellW = (w - gap*2) / 3, cellH = h;
+  const times = pickFrameTimes(a), labels=['address','top','impact'], current=video.currentTime;
+  for (let i=0;i<3;i++){
     const cx = x + i*(cellW + gap);
-    ctx.save();
-    ctx.fillStyle = '#000'; ctx.fillRect(cx, y, cellW, cellH);
+    ctx.save(); ctx.fillStyle='#000'; ctx.fillRect(cx, y, cellW, cellH);
     try { await seekTo(video, times[i]); } catch {}
-    const vw = video.videoWidth || 1280, vh = video.videoHeight || 720;
-    const scale = Math.min(cellW / vw, cellH / vh);
-    const dw = vw * scale, dh = vh * scale;
-    const dx = cx + (cellW - dw) / 2, dy = y + (cellH - dh) / 2;
+    const vw=video.videoWidth||1280, vh=video.videoHeight||720, s=Math.min(cellW/vw,cellH/vh);
+    const dw=vw*s, dh=vh*s, dx=cx+(cellW-dw)/2, dy=y+(cellH-dh)/2;
     ctx.drawImage(video, dx, dy, dw, dh);
-    ctx.fillStyle = '#e5e7eb'; ctx.font = 'bold 14px Inter, system-ui, sans-serif';
-    ctx.fillText(labels[i], cx + 8, y + cellH - 10);
+    ctx.fillStyle='#e5e7eb'; ctx.font='bold 14px Inter, system-ui, sans-serif'; ctx.fillText(labels[i], cx+8, y+cellH-10);
     ctx.restore();
   }
   try { await seekTo(video, current); } catch {}
 }
 
-function pickFrameTimes(a) {
-  const kf = a?.keyframes || {};
-  const frames = Array.isArray(kf.frames) ? kf.frames : [];
-  const find = (name) => frames.find(f => new RegExp(name,'i').test(f?.label || ''));
-  const impact = typeof kf.impact === 'number' ? kf.impact : (find('impact')?.t ?? 0);
-  const address = find('address')?.t ?? frames[0]?.t ?? Math.max(0, impact - 1.0);
-  const top = find('top')?.t ?? frames[Math.floor(frames.length/2)]?.t ?? Math.max(0, impact - 0.2);
+function pickFrameTimes(a){
+  const kf=a?.keyframes||{}, frames=Array.isArray(kf.frames)?kf.frames:[];
+  const find=(name)=>frames.find(f=>new RegExp(name,'i').test(f?.label||''));
+  const impact=typeof kf.impact==='number'?kf.impact:(find('impact')?.t ?? 0);
+  const address=find('address')?.t ?? frames[0]?.t ?? Math.max(0, impact-1.0);
+  const top=find('top')?.t ?? frames[Math.floor(frames.length/2)]?.t ?? Math.max(0, impact-0.2);
   return [address, top, impact];
 }
 
-function drawKVb(ctx, x, y, key, val, rangeKey, rs){
-  const s=assess(val,rangeKey,rs); const badge=statusBadgeCanvas(ctx,s.badge);
-  ctx.fillStyle='#9ca3af'; ctx.fillText(key,x,y);
-  ctx.fillStyle='#e5e7eb'; ctx.fillText(fmt(val),x+260,y);
-  if(badge) badge(ctx,x+340,y-18);
-}
+function drawKVb(ctx,x,y,key,val,rangeKey,rs){ const s=assess(val,rangeKey,rs), badge=statusBadgeCanvas(ctx,s.badge);
+  ctx.fillStyle='#9ca3af'; ctx.fillText(key,x,y); ctx.fillStyle='#e5e7eb'; ctx.fillText(fmt(val),x+260,y); if(badge) badge(ctx,x+340,y-18); }
 
 function statusBadgeCanvas(ctx,type){
   if(!type) return null;
   const m={ ok:{bg:'#064e3b',fg:'#a7f3d0',bd:'#065f46',tx:'OK'}, warn:{bg:'#4d3700',fg:'#fde68a',bd:'#b45309',tx:'WARN'}, bad:{bg:'#3f0a0a',fg:'#fecaca',bd:'#dc2626',tx:'BAD'} }[type];
   return (c,x,y)=>{ c.save(); c.fillStyle=m.bg; c.strokeStyle=m.bd; c.lineWidth=2; roundRect(c,x,y,64,26,13); c.fill(); c.stroke(); c.fillStyle=m.fg; c.font='bold 12px Inter, system-ui, sans-serif'; c.fillText(m.tx,x+14,y+18); c.restore(); };
 }
-
-function roundRect(ctx,x,y,w,h,r){
-  ctx.beginPath();
-  ctx.moveTo(x+r,y);
-  ctx.arcTo(x+w,y,x+w,y+h,r);
-  ctx.arcTo(x+w,y+h,x,y+h,r);
-  ctx.arcTo(x,y+h,x,y,r);
-  ctx.arcTo(x,y,x+w,y,r);
-  ctx.closePath();
-}
+function roundRect(ctx,x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
 
 function drawBullet(ctx,x,y,text,maxWidth,lineHeight){
-  const words=String(text).split(' '); let line='';
-  ctx.fillStyle='#e5e7eb';
-  for(let n=0;n<words.length;n++){
-    const test=line+words[n]+' ';
-    if(ctx.measureText(test).width>maxWidth&&n>0){ ctx.fillText(line,x,y); line=words[n]+' '; y+=lineHeight; }
-    else line=test;
-  }
-  ctx.fillText(line,x,y);
-  return y+lineHeight;
+  const words=String(text).split(' '); let line=''; ctx.fillStyle='#e5e7eb';
+  for(let n=0;n<words.length;n++){ const test=line+words[n]+' '; if(ctx.measureText(test).width>maxWidth&&n>0){ ctx.fillText(line,x,y); line=words[n]+' '; y+=lineHeight; } else line=test; }
+  ctx.fillText(line,x,y); return y+lineHeight;
 }
 
 function pickImpactTime(a){
   const kf=a?.keyframes;
   if(kf&&typeof kf==='object'){
     if(typeof kf.impact==='number') return kf.impact;
-    if(Array.isArray(kf.frames)){
-      const imp=kf.frames.find(f=>/impact/i.test(f?.label||''));
-      if(imp&&typeof imp.t==='number') return imp.t;
-      if(typeof kf.frames[0]?.t==='number') return kf.frames[0].t;
-    }
+    if(Array.isArray(kf.frames)){ const imp=kf.frames.find(f=>/impact/i.test(f?.label||'')); if(imp&&typeof imp.t==='number') return imp.t; if(typeof kf.frames[0]?.t==='number') return kf.frames[0].t; }
   }
   return Math.max(0,(window?.video?.currentTime??0));
 }
 
 async function drawVideoFrame(ctx, video, t, rect){
-  const {x,y,w,h}=rect;
-  const cur=video.currentTime;
-  try{ await seekTo(video,t);}catch{}
-  const vw=video.videoWidth||1280, vh=video.videoHeight||720;
-  const s=Math.min(w/vw,h/vh);
-  const dw=vw*s, dh=vh*s;
-  const dx=x+(w-dw)/2, dy=y+(h-dh)/2;
+  const {x,y,w,h}=rect, cur=video.currentTime; try{ await seekTo(video,t);}catch{}
+  const vw=video.videoWidth||1280, vh=video.videoHeight||720, s=Math.min(w/vw,h/vh);
+  const dw=vw*s, dh=vh*s, dx=x+(w-dw)/2, dy=y+(h-dh)/2;
   ctx.save(); ctx.fillStyle='#000'; ctx.fillRect(x,y,w,h); ctx.drawImage(video,dx,dy,dw,dh); ctx.restore();
-  try{ await seekTo(video,cur);}catch{}
-  return {dx,dy,dw,dh};
+  try{ await seekTo(video,cur);}catch{}; return {dx,dy,dw,dh};
 }
-
-function seekTo(video,t){
-  return new Promise((res,rej)=>{
-    const onS=()=>{video.removeEventListener('seeked',onS); res();};
-    const onE=()=>{video.removeEventListener('error',onE); rej('seek error');};
-    video.addEventListener('seeked',onS,{once:true});
-    video.addEventListener('error',onE,{once:true});
-    try{ video.currentTime=Math.max(0,t);}catch{ rej('seek set failed'); }
-    setTimeout(()=>{ video.removeEventListener('seeked',onS); res(); },1200);
-  });
-}
+function seekTo(video,t){ return new Promise((res,rej)=>{ const onS=()=>{video.removeEventListener('seeked',onS); res();}; const onE=()=>{video.removeEventListener('error',onE); rej('seek error');};
+  video.addEventListener('seeked',onS,{once:true}); video.addEventListener('error',onE,{once:true}); try{ video.currentTime=Math.max(0,t);}catch{ rej('seek set failed'); }
+  setTimeout(()=>{ video.removeEventListener('seeked',onS); res(); },1200); }); }
 
 // ---------- Overlays on the main frame ----------
 function drawOverlaysOnImpact(ctx, a, rect) {
-  const ang = a?.angles || {};
-  const st = a?.stance || {};
-  const spineDeg = toNum(ang.spine_impact_deg);
-  const shaftDeg = toNum(ang.shaft_impact_deg);
-  const stanceFrac = clamp01(toNum(st.impact_fraction));
-  const { dx, dy, dw, dh } = rect;
-  const toRad = (deg) => (deg * Math.PI) / 180;
+  const ang=a?.angles||{}, st=a?.stance||{};
+  const spineDeg=toNum(ang.spine_impact_deg), shaftDeg=toNum(ang.shaft_impact_deg), stanceFrac=clamp01(toNum(st.impact_fraction));
+  const { dx, dy, dw, dh } = rect; const toRad=(deg)=>(deg*Math.PI)/180;
 
   if (isFinite(spineDeg)) {
-    const cx = dx + dw * 0.5, cy = dy + dh * 0.45, len = Math.min(dw, dh) * 0.35;
-    const rad = toRad(-spineDeg);
-    const x1 = cx - Math.cos(rad) * len, y1 = cy - Math.sin(rad) * len;
-    const x2 = cx + Math.cos(rad) * len, y2 = cy + Math.sin(rad) * len;
-    ctx.save(); ctx.strokeStyle='#10b981'; ctx.lineWidth=5;
-    ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
-    ctx.fillStyle='#10b981'; ctx.font='bold 22px Inter, system-ui, sans-serif';
-    ctx.fillText(`${round1(spineDeg)}° spine`, cx + 10, cy - 10); ctx.restore();
+    const cx=dx+dw*0.5, cy=dy+dh*0.45, len=Math.min(dw,dh)*0.35, rad=toRad(-spineDeg);
+    const x1=cx-Math.cos(rad)*len, y1=cy-Math.sin(rad)*len, x2=cx+Math.cos(rad)*len, y2=cy+Math.sin(rad)*len;
+    ctx.save(); ctx.strokeStyle='#10b981'; ctx.lineWidth=5; ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+    ctx.fillStyle='#10b981'; ctx.font='bold 22px Inter, system-ui, sans-serif'; ctx.fillText(`${Math.round(spineDeg*10)/10}° spine`, cx+10, cy-10); ctx.restore();
   }
-
   if (isFinite(shaftDeg)) {
-    const hx = dx + dw * 0.5, hy = dy + dh * 0.7, len = Math.min(dw, dh) * 0.4;
-    const rad = toRad(-shaftDeg);
-    const x1 = hx, y1 = hy, x2 = hx + Math.cos(rad) * len, y2 = hy + Math.sin(rad) * len;
-    ctx.save(); ctx.strokeStyle='#3b82f6'; ctx.lineWidth=5;
-    ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
-    ctx.fillStyle='#3b82f6'; ctx.font='bold 22px Inter, system-ui, sans-serif';
-    ctx.fillText(`${round1(shaftDeg)}° shaft`, x2 + 10, y2); ctx.restore();
+    const hx=dx+dw*0.5, hy=dy+dh*0.7, len=Math.min(dw,dh)*0.4, rad=toRad(-shaftDeg);
+    const x1=hx, y1=hy, x2=hx+Math.cos(rad)*len, y2=hy+Math.sin(rad)*len;
+    ctx.save(); ctx.strokeStyle='#3b82f6'; ctx.lineWidth=5; ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+    ctx.fillStyle='#3b82f6'; ctx.font='bold 22px Inter, system-ui, sans-serif'; ctx.fillText(`${Math.round(shaftDeg*10)/10}° shaft`, x2+10, y2); ctx.restore();
   }
-
   if (isFinite(stanceFrac)) {
-    const y = dy + dh * 0.92, maxW = dw * 0.8, w = maxW * clamp01(stanceFrac), x = dx + (dw - w) / 2;
-    ctx.save(); ctx.strokeStyle='#f59e0b'; ctx.lineWidth=8;
-    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + w, y); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(x, y - 10); ctx.lineTo(x, y + 10); ctx.moveTo(x + w, y - 10); ctx.lineTo(x + w, y + 10); ctx.stroke();
-    ctx.fillStyle='#fbbf24'; ctx.font='bold 20px Inter, system-ui, sans-serif';
-    ctx.fillText(`stance ${fmt(stanceFrac)}`, x + w + 12, y + 6); ctx.restore();
+    const y=dy+dh*0.92, maxW=dw*0.8, w=maxW*clamp01(stanceFrac), x=dx+(dw-w)/2;
+    ctx.save(); ctx.strokeStyle='#f59e0b'; ctx.lineWidth=8; ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x+w,y); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x,y-10); ctx.lineTo(x,y+10); ctx.moveTo(x+w,y-10); ctx.lineTo(x+w,y+10); ctx.stroke();
+    ctx.fillStyle='#fbbf24'; ctx.font='bold 20px Inter, system-ui, sans-serif'; ctx.fillText(`stance ${fmt(stanceFrac)}`, x+w+12, y+6); ctx.restore();
   }
 }
 
@@ -496,6 +392,4 @@ function clamp01(v){ return !isFinite(v)?NaN:Math.max(0,Math.min(1,v)); }
 function toNum(v){ const n=Number(v); return Number.isNaN(n)?NaN:n; }
 
 // ---------- UI error ----------
-function showError(msg) {
-  els.results.innerHTML = `<div class="metric"><span class="label">Error</span><div class="code">${escapeHtml(msg)}</div></div>`;
-}
+function showError(msg){ els.results.innerHTML=`<div class="metric"><span class="label">Error</span><div class="code">${escapeHtml(msg)}</div></div>`; }
