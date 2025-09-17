@@ -7,7 +7,7 @@ on:
     branches: [ feat/recover ]
 
 jobs:
-  contract-test:
+  contract-and-coaching:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,3 +17,7 @@ jobs:
           node-version: '20'
       - name: Verify analyze contract against golden
         run: node scripts/verify-analyze-shape.mjs fixtures/golf1.golden.json
+      - name: Validate ranges profiles
+        run: node scripts/validate-ranges.mjs
+      - name: Coaching generator unit check
+        run: node scripts/test-coaching-generator.mjs
