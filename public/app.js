@@ -79,10 +79,10 @@ els.analyze?.addEventListener('click', async () => {
     const shape = validateContract(analysis);
     renderBanner(shape);
 
-    // Coaching merge
+    // Coaching: merge generator + normalize to strings
     const baseCoach = Array.isArray(analysis.coaching) ? analysis.coaching : [];
     const extra = generateCoaching(analysis, (ranges?.default || ranges || {}));
-    analysis.coaching = dedupe([...baseCoach, ...extra]);
+    analysis.coaching = dedupe(toTips([...baseCoach, ...extra]));
 
     renderResults(analysis);
     setExportEnabled(true);
@@ -189,7 +189,7 @@ function validateContract(j){
 
 // ---------- Render results ----------
 function renderResults(a){
-  const t=a?.tempo||{}, ang=a?.angles||{}, st=a?.stance||{}, coach=Array.isArray(a?.coaching)?a.coaching:[];
+  const t=a?.tempo||{}, ang=a?.angles||{}, st=a?.stance||{}, coach=toTips(a?.coaching);
   const v=(k,val)=>{ const as=assess(val,k,(ranges?.default||ranges||{})); const b=as.badge?`<span class="badge ${as.badge}">${as.badge.toUpperCase()}</span>`:''; return `<div style="display:flex;gap:8px;align-items:center">${fmt(val)} ${b}</div>`; };
   els.results.innerHTML += `
     ${metric('Tempo (ratio)', v('tempo.ratio', t.ratio))}
@@ -206,8 +206,34 @@ function renderResults(a){
 function metric(label, valueHtml){ return `<div class="metric"><span class="label">${escapeHtml(label)}</span><div>${valueHtml}</div></div>`; }
 function code(s){ return `<pre class="code">${escapeHtml(s)}</pre>`; }
 function escapeHtml(s){ return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
-function fmt(v){ return v==null ? '–' : String(Math.round(Number(v)*100)/100); }
-function dedupe(a){ return Array.from(new Set(a)); }
+
+// Robust number formatting: show "–" when null/NaN/∞
+function fmt(v){
+  const n = Number(v);
+  if (v==null || !Number.isFinite(n)) return '–';
+  return String(Math.round(n*100)/100);
+}
+
+// ---------- Coaching helpers ----------
+function toTips(arr){
+  if (!Array.isArray(arr)) return [];
+  const tips = arr.map(x=>{
+    if (typeof x === 'string') return x.trim();
+    if (x && typeof x === 'object') {
+      // common fields in analyzers
+      const s = x.text || x.message || x.tip || x.note || x.reason;
+      if (typeof s === 'string') return s.trim();
+      // try "label: advice"
+      const label = (typeof x.label==='string' && x.label.trim()) || '';
+      const advice = (typeof x.advice==='string' && x.advice.trim()) || '';
+      if (label || advice) return `${label}${label&&advice?': ':''}${advice}`.trim();
+      // last resort: stringify safely
+      try { return JSON.stringify(x); } catch { return String(x); }
+    }
+    return String(x);
+  }).filter(Boolean);
+  return tips;
+}
 
 // ---------- Normalization, ranges, coaching ----------
 function normalize(obj){
@@ -227,10 +253,11 @@ function normalize(obj){
 }
 
 function assess(value, key, rs){
-  if (value==null || !rs || !rs[key]) return { badge:'', level:'na' };
+  const n = Number(value);
+  if (!Number.isFinite(n) || !rs || !rs[key]) return { badge:'', level:'na' };
   const r=rs[key];
-  const inGood=value>=r.good[0]&&value<=r.good[1];
-  const inWarn=value>=r.warn[0]&&value<=r.warn[1];
+  const inGood=n>=r.good[0]&&n<=r.good[1];
+  const inWarn=n>=r.warn[0]&&n<=r.warn[1];
   if (inGood) return { badge:'ok', level:'ok' };
   if (inWarn) return { badge:'warn', level:'warn' };
   return { badge:'bad', level:'bad' };
@@ -245,12 +272,13 @@ function generateCoaching(a, rs){
   push(ang.shaft_impact_deg,'angles.shaft_impact_deg','Shaft angle @ impact','Hands ahead; compress the ball');
   push(st.impact_fraction,'stance.impact_fraction','Stance width','Match stance to club for balance & turn');
   function push(val,key,label,cue){
-    if(val==null||!rs[key]) return;
-    const s=assess(Number(val),key,rs);
-    if(s.level==='bad') tips.push(`${label} out of range: ${fmt(val)}. ${cue}`);
-    else if(s.level==='warn') tips.push(`${label} borderline: ${fmt(val)}. ${cue}`);
+    const n = Number(val);
+    if(!Number.isFinite(n) || !rs[key]) return;
+    const s=assess(n,key,rs);
+    if(s.level==='bad') tips.push(`${label} out of range: ${fmt(n)}. ${cue}`);
+    else if(s.level==='warn') tips.push(`${label} borderline: ${fmt(n)}. ${cue}`);
   }
-  return dedupe(tips);
+  return tips;
 }
 
 // ---------- PNG with options: frame strip + 2× scale ----------
@@ -290,7 +318,7 @@ async function renderReportPNG(a, video, rs, opts={}) {
   const rightX = Math.floor(W*0.52); let ry = imgRect.y + imgRect.h + 40;
   ctx.font = 'bold 28px Inter, system-ui, sans-serif'; ctx.fillText('Coaching Tips', rightX, ry); ry += line;
   ctx.font = '20px Inter, system-ui, sans-serif';
-  const coaching = Array.isArray(a?.coaching) ? a.coaching : [];
+  const coaching = toTips(a?.coaching);
   if (coaching.length === 0) ctx.fillText('– No tips provided –', rightX, ry);
   else for (const tip of coaching.slice(0, 10)) { ry = drawBullet(ctx, rightX, ry, tip, W - rightX - pad, line); if (ry > (includeStrip ? H - pad - 210 : H - pad - 60)) break; }
 
@@ -350,7 +378,7 @@ function pickFrameTimes(a) {
 }
 
 function drawKVb(ctx, x, y, key, val, rangeKey, rs){
-  const s=assess(Number(val),rangeKey,rs); const badge=statusBadgeCanvas(ctx,s.badge);
+  const s=assess(val,rangeKey,rs); const badge=statusBadgeCanvas(ctx,s.badge);
   ctx.fillStyle='#9ca3af'; ctx.fillText(key,x,y);
   ctx.fillStyle='#e5e7eb'; ctx.fillText(fmt(val),x+260,y);
   if(badge) badge(ctx,x+340,y-18);
@@ -421,7 +449,7 @@ function seekTo(video,t){
   });
 }
 
-// ---------- Overlays on the main frame (NOW INCLUDED) ----------
+// ---------- Overlays on the main frame ----------
 function drawOverlaysOnImpact(ctx, a, rect) {
   const ang = a?.angles || {};
   const st = a?.stance || {};
