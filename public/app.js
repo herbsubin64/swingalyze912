@@ -1,4 +1,4 @@
-// Swingalyze — API-first coaching UI with PNG export + overlays + tunable ranges
+// Swingalyze — API-first coaching with per-club tunable ranges + overlays + exports
 
 const els = {
   file: document.getElementById('fileInput'),
@@ -9,26 +9,62 @@ const els = {
   statusDot: document.getElementById('statusDot'),
   video: document.getElementById('video'),
   results: document.getElementById('results'),
+  clubSelect: document.getElementById('clubSelect'),
 };
 
 let analysis = null;
 let videoBlobUrl = null;
-let ranges = null;
+let rangesAll = null;     // raw from ranges.json (default + club presets)
+let activeRanges = null;  // merged: default + selected club
+let activeClub = null;
+
+// --- Bootstrap ---
+init();
+
+async function init(){
+  // Persisted club or URL ?club=driver override
+  const urlClub = new URLSearchParams(location.search).get('club');
+  const savedClub = localStorage.getItem('swingalyze.club') || '7i';
+  activeClub = (urlClub || savedClub || '7i').toLowerCase();
+  if (els.clubSelect) els.clubSelect.value = ['driver','7i','wedge'].includes(activeClub) ? activeClub : '7i';
+
+  await Promise.all([checkStatus(), loadRanges()]);
+  applyClub(activeClub);
+}
 
 async function checkStatus() {
   try {
     const res = await fetch('/api/status');
-    if (res.ok) { els.statusDot.classList.replace('offline','online'); }
-    else { throw new Error('bad status'); }
-  } catch { els.statusDot.classList.replace('online','offline'); }
+    if (res.ok) { els.statusDot.classList.remove('offline'); els.statusDot.classList.add('online'); }
+    else throw new Error('bad status');
+  } catch { els.statusDot.classList.remove('online'); els.statusDot.classList.add('offline'); }
 }
 
 async function loadRanges() {
   try {
     const res = await fetch('./ranges.json', { cache: 'no-store' });
-    ranges = res.ok ? await res.json() : null;
-  } catch { ranges = null; }
+    rangesAll = res.ok ? await res.json() : {};
+  } catch { rangesAll = {}; }
 }
+
+function applyClub(club){
+  const base = rangesAll?.default || {};
+  const override = rangesAll?.[club] || {};
+  activeRanges = { ...base, ...override }; // shallow merge is fine (keys are leaf metrics)
+  activeClub = club;
+  localStorage.setItem('swingalyze.club', club);
+  // Re-render badges/coaching if we already have analysis
+  if (analysis) {
+    // Refresh auto coaching merge with new ranges
+    const extra = generateCoaching(analysis, activeRanges);
+    const baseCoach = Array.isArray(analysis.coaching) ? analysis.coaching : [];
+    analysis.coaching = dedupe([...baseCoach, ...extra]);
+    renderResults(analysis);
+  }
+}
+
+// --- UI events ---
+els.clubSelect?.addEventListener('change', (e) => applyClub(e.target.value));
 
 function setAnalyzeEnabled(on){ els.analyze.disabled=!on; }
 function setExportEnabled(on){
@@ -54,7 +90,6 @@ els.analyze.addEventListener('click', async () => {
   setAnalyzeEnabled(false);
   els.analyze.textContent = 'Analyzing…';
   try {
-    await loadRanges();
     const fd = new FormData();
     fd.append('video', file);
     const res = await fetch('/api/analyze', { method: 'POST', body: fd });
@@ -62,13 +97,10 @@ els.analyze.addEventListener('click', async () => {
     const raw = await res.json();
     analysis = normalize(raw);
 
-    // Merge auto-generated coaching when API didn't provide
-    if (!Array.isArray(analysis.coaching) || analysis.coaching.length === 0) {
-      analysis.coaching = generateCoaching(analysis, ranges);
-    } else {
-      const extra = generateCoaching(analysis, ranges);
-      analysis.coaching = dedupe([...analysis.coaching, ...extra]);
-    }
+    // Merge auto-generated coaching with per-club ranges
+    const extra = generateCoaching(analysis, activeRanges);
+    const baseCoach = Array.isArray(analysis.coaching) ? analysis.coaching : [];
+    analysis.coaching = dedupe([...baseCoach, ...extra]);
 
     renderResults(analysis);
     setExportEnabled(true);
@@ -87,10 +119,10 @@ els.exportPngBtn.addEventListener('click', async () => {
   els.exportPngBtn.textContent = 'Rendering…';
   els.exportPngBtn.disabled = true;
   try {
-    const pngBlob = await renderReportPNG(analysis, els.video, ranges);
+    const pngBlob = await renderReportPNG(analysis, els.video, activeRanges, activeClub);
     const url = URL.createObjectURL(pngBlob);
     els.downloadLink.href = url;
-    els.downloadLink.download = 'Swingalyze-Report.png';
+    els.downloadLink.download = `Swingalyze-Report-${(activeClub||'7i')}.png`;
     els.downloadLink.classList.remove('hidden');
     els.downloadLink.click();
   } catch (e) {
@@ -103,19 +135,22 @@ els.exportPngBtn.addEventListener('click', async () => {
 
 els.exportJsonBtn.addEventListener('click', () => {
   if (!analysis) return;
-  const blob = new Blob([JSON.stringify(analysis, null, 2)], { type: 'application/json' });
+  const payload = { club: activeClub, ranges: activeRanges, analysis };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   els.downloadLink.href = url;
-  els.downloadLink.download = 'Swingalyze-Analysis.json';
+  els.downloadLink.download = `Swingalyze-Analysis-${(activeClub||'7i')}.json`;
   els.downloadLink.classList.remove('hidden');
   els.downloadLink.click();
 });
 
+// --- Helpers ---
 function showError(msg) {
   els.results.innerHTML = `<div class="metric"><span class="label">Error</span><div class="code">${escapeHtml(msg)}</div></div>`;
 }
-
-/* ---------- Normalization + Ranges ---------- */
+function escapeHtml(s){ return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+function fmt(v){ return v==null ? '–' : String(Math.round(v*100)/100); }
+function dedupe(arr){ return Array.from(new Set(arr)); }
 
 function normalize(obj){
   const out = {
@@ -134,10 +169,7 @@ function normalize(obj){
     shaft_impact_deg: a.shaft_impact_deg ?? a.shaftImpact ?? a.shaftImpactDeg ?? a.shaft_impact
   };
   const s = out.stance;
-  out.stance = {
-    ...s,
-    impact_fraction: s.impact_fraction ?? s.impact ?? s.impactFrac
-  };
+  out.stance = { ...s, impact_fraction: s.impact_fraction ?? s.impact ?? s.impactFrac };
   return out;
 }
 
@@ -156,20 +188,12 @@ function generateCoaching(a, rs){
   const t = a.tempo || {};
   const ang = a.angles || {};
   const st = a.stance || {};
-
   pushRangeTip(t.ratio, 'tempo.ratio', 'Tempo', 'Aim ~3:1 (smooth back, brisk down)');
   pushRangeTip(t.backswing, 'tempo.backswing', 'Backswing time', 'Keep backswing controlled, not rushed');
   pushRangeTip(t.downswing, 'tempo.downswing', 'Downswing time', 'Snap through impact—no decel');
-
-  pushRangeTip(ang.spine_impact_deg, 'angles.spine_impact_deg', 'Spine tilt @ impact',
-    'Maintain forward tilt; feel chest over ball through strike');
-
-  pushRangeTip(ang.shaft_impact_deg, 'angles.shaft_impact_deg', 'Shaft angle @ impact',
-    'Hands ahead at impact; compress the ball');
-
-  pushRangeTip(st.impact_fraction, 'stance.impact_fraction', 'Stance width',
-    'Match stance to club; too narrow hurts balance, too wide limits turn');
-
+  pushRangeTip(ang.spine_impact_deg, 'angles.spine_impact_deg', 'Spine tilt @ impact','Maintain forward tilt through strike');
+  pushRangeTip(ang.shaft_impact_deg, 'angles.shaft_impact_deg', 'Shaft angle @ impact','Hands ahead; compress the ball');
+  pushRangeTip(st.impact_fraction, 'stance.impact_fraction', 'Stance width','Match stance to club for balance & turn');
   function pushRangeTip(val, key, label, cue){
     if (val==null) return;
     const a = assess(Number(val), key, rs);
@@ -179,92 +203,75 @@ function generateCoaching(a, rs){
   return dedupe(tips);
 }
 
-function dedupe(arr){ return Array.from(new Set(arr)); }
-
-/* ---------- UI Rendering ---------- */
-
 function renderResults(a) {
   const tempo = a?.tempo || {};
   const angles = a?.angles || {};
   const stance = a?.stance || {};
   const coach = Array.isArray(a?.coaching) ? a.coaching : [];
 
-  const v = (k, val) => {
-    const as = assess(val, k, ranges);
+  const badgeCell = (k, val) => {
+    const as = assess(Number(val), k, activeRanges);
     const badge = as.badge ? `<span class="badge ${as.badge}">${as.badge.toUpperCase()}</span>` : '';
     return `<div style="display:flex;gap:8px;align-items:center">${fmt(val)} ${badge}</div>`;
   };
 
   const html = `
-    ${metric('Tempo (ratio)', v('tempo.ratio', tempo.ratio))}
-    ${metric('Backswing (s)', v('tempo.backswing', tempo.backswing))}
-    ${metric('Downswing (s)', v('tempo.downswing', tempo.downswing))}
-    ${metric('Spine tilt @impact (°)', v('angles.spine_impact_deg', angles.spine_impact_deg))}
-    ${metric('Shaft angle @impact (°)', v('angles.shaft_impact_deg', angles.shaft_impact_deg))}
-    ${metric('Stance width @impact', v('stance.impact_fraction', stance.impact_fraction))}
+    ${metric('Club', `<strong>${escapeHtml((activeClub||'7i').toUpperCase())}</strong>`)}
+    ${metric('Tempo (ratio)', badgeCell('tempo.ratio', tempo.ratio))}
+    ${metric('Backswing (s)', badgeCell('tempo.backswing', tempo.backswing))}
+    ${metric('Downswing (s)', badgeCell('tempo.downswing', tempo.downswing))}
+    ${metric('Spine tilt @impact (°)', badgeCell('angles.spine_impact_deg', angles.spine_impact_deg))}
+    ${metric('Shaft angle @impact (°)', badgeCell('angles.shaft_impact_deg', angles.shaft_impact_deg))}
+    ${metric('Stance width @impact', badgeCell('stance.impact_fraction', stance.impact_fraction))}
     ${metric('Keyframes', code(JSON.stringify(a?.keyframes ?? {}, null, 2)))}
     ${coach.length ? metric('Coaching', `<ul>${coach.map(c=>`<li>${escapeHtml(c)}</li>`).join('')}</ul>`) : metric('Coaching','–')}
   `;
   els.results.innerHTML = html;
 }
 
-function metric(label, valueHtml) {
-  return `<div class="metric"><span class="label">${escapeHtml(label)}</span><div>${valueHtml}</div></div>`;
-}
+function metric(label, valueHtml){ return `<div class="metric"><span class="label">${escapeHtml(label)}</span><div>${valueHtml}</div></div>`; }
 function code(s){ return `<pre class="code">${escapeHtml(s)}</pre>`; }
-function fmt(v){ return v==null ? '–' : String(Math.round(v*100)/100); }
-function escapeHtml(s){ return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+function round1(n){ return Math.round(n*10)/10; }
+function round2(n){ return Math.round(n*100)/100; }
+function safeFmt(v){ return (v==null || Number.isNaN(Number(v))) ? '–' : String(Math.round(Number(v)*100)/100); }
 
-/* ---------- PNG Report ---------- */
-
-async function renderReportPNG(a, video, rs) {
+// --- PNG report (includes club label) ---
+async function renderReportPNG(a, video, rs, club) {
   const W = 1200, H = 1600, pad = 40;
   const canvas = document.createElement('canvas'); canvas.width=W; canvas.height=H;
   const ctx = canvas.getContext('2d');
 
   ctx.fillStyle = '#0b0c10'; ctx.fillRect(0,0,W,H);
-
   ctx.fillStyle = '#e5e7eb';
   ctx.font = 'bold 40px Inter, system-ui, sans-serif';
   ctx.fillText('Swingalyze — Coaching Report', pad, pad+20);
   ctx.font = '18px Inter, system-ui, sans-serif';
-  ctx.fillText(new Date().toLocaleString(), pad, pad+50);
+  ctx.fillText(`${new Date().toLocaleString()} • Club: ${(club||'7i').toUpperCase()}`, pad, pad+50);
 
   const impactT = pickImpactTime(a);
   const imgRect = { x: pad, y: pad+90, w: W - pad*2, h: 540 };
   const drawn = await drawVideoFrame(ctx, video, impactT, imgRect);
-
   drawOverlaysOnImpact(ctx, a, drawn);
 
-  // Left metrics with badges
   const leftX = pad; let y = imgRect.y + imgRect.h + 40; const line = 30;
-  const tempo = a?.tempo || {}, ang = a?.angles || {}, st = a?.stance || {};
+  const t = a?.tempo || {}, ang = a?.angles || {}, st = a?.stance || {};
   ctx.font = 'bold 28px Inter, system-ui, sans-serif'; ctx.fillText('Key Metrics', leftX, y); y += line;
   ctx.font = '20px Inter, system-ui, sans-serif';
-
-  drawKVb(ctx, leftX, y, 'Tempo (ratio)', tempo.ratio, 'tempo.ratio', rs); y += line;
-  drawKVb(ctx, leftX, y, 'Backswing (s)', tempo.backswing, 'tempo.backswing', rs); y += line;
-  drawKVb(ctx, leftX, y, 'Downswing (s)', tempo.downswing, 'tempo.downswing', rs); y += line;
+  drawKVb(ctx, leftX, y, 'Tempo (ratio)', t.ratio, 'tempo.ratio', rs); y += line;
+  drawKVb(ctx, leftX, y, 'Backswing (s)', t.backswing, 'tempo.backswing', rs); y += line;
+  drawKVb(ctx, leftX, y, 'Downswing (s)', t.downswing, 'tempo.downswing', rs); y += line;
   drawKVb(ctx, leftX, y, 'Spine tilt @impact (°)', ang.spine_impact_deg, 'angles.spine_impact_deg', rs); y += line;
   drawKVb(ctx, leftX, y, 'Shaft angle @impact (°)', ang.shaft_impact_deg, 'angles.shaft_impact_deg', rs); y += line;
   drawKVb(ctx, leftX, y, 'Stance width @impact', st.impact_fraction, 'stance.impact_fraction', rs); y += line;
 
-  // Right coaching
   const rightX = Math.floor(W*0.52); let ry = imgRect.y + imgRect.h + 40;
   ctx.font = 'bold 28px Inter, system-ui, sans-serif'; ctx.fillText('Coaching Tips', rightX, ry); ry += line;
   ctx.font = '20px Inter, system-ui, sans-serif';
   const coaching = Array.isArray(a?.coaching) ? a.coaching : [];
-  if (coaching.length === 0) {
-    ctx.fillText('– No tips provided –', rightX, ry);
-  } else {
-    for (const tip of coaching.slice(0, 10)) {
-      ry = drawBullet(ctx, rightX, ry, tip, W - rightX - pad, line);
-      if (ry > H - pad - 60) break;
-    }
-  }
+  if (coaching.length === 0) ctx.fillText('– No tips provided –', rightX, ry);
+  else for (const tip of coaching.slice(0, 10)) { ry = drawBullet(ctx, rightX, ry, tip, W - rightX - pad, line); if (ry > H - pad - 60) break; }
 
-  ctx.globalAlpha = 0.8;
-  ctx.font = '16px Inter, system-ui, sans-serif';
+  ctx.globalAlpha = 0.8; ctx.font = '16px Inter, system-ui, sans-serif';
   ctx.fillText('Checkpoint: 2025-09-17 · Branch: feat/recover · Exported as PNG (client-side)', pad, H - pad);
   ctx.globalAlpha = 1;
 
@@ -288,11 +295,10 @@ function statusBadgeCanvas(ctx, type){
     warn: { bg:'#4d3700', fg:'#fde68a', border:'#b45309', text:'WARN' },
     bad:  { bg:'#3f0a0a', fg:'#fecaca', border:'#dc2626', text:'BAD'  }
   }[type];
-  if (!styles) return null;
   return (ctx2, x, y) => {
     ctx2.save();
-    ctx2.fillStyle = styles.bg; ctx2.strokeStyle = styles.border;
-    ctx2.lineWidth = 2; roundRect(ctx2, x, y, 64, 26, 13); ctx2.fill(); ctx2.stroke();
+    ctx2.fillStyle = styles.bg; ctx2.strokeStyle = styles.border; ctx2.lineWidth = 2;
+    roundRect(ctx2, x, y, 64, 26, 13); ctx2.fill(); ctx2.stroke();
     ctx2.fillStyle = styles.fg; ctx2.font = 'bold 12px Inter, system-ui, sans-serif';
     ctx2.fillText(styles.text, x + 14, y + 18);
     ctx2.restore();
@@ -308,16 +314,13 @@ function roundRect(ctx, x, y, w, h, r){
   ctx.closePath();
 }
 
-function safeFmt(v){ return (v==null || Number.isNaN(Number(v))) ? '–' : String(Math.round(Number(v)*100)/100); }
-
 function drawBullet(ctx, x, y, text, maxWidth, lineHeight) {
   const words = String(text).split(' '); let line = '';
   ctx.fillStyle = '#e5e7eb';
   for (let n=0; n<words.length; n++) {
     const test = line + words[n] + ' ';
-    if (ctx.measureText(test).width > maxWidth && n>0) {
-      ctx.fillText(line, x, y); line = words[n] + ' '; y += lineHeight;
-    } else line = test;
+    if (ctx.measureText(test).width > maxWidth && n>0) { ctx.fillText(line, x, y); line = words[n] + ' '; y += lineHeight; }
+    else line = test;
   }
   ctx.fillText(line, x, y);
   return y + lineHeight;
@@ -360,17 +363,16 @@ function seekTo(video, t){
   });
 }
 
-/* ---------- Overlays ---------- */
+/* Visual overlays (spine/shaft/stance) */
 function drawOverlaysOnImpact(ctx, a, rect) {
-  const angles = a?.angles || {};
-  const stance = a?.stance || {};
-  const spineDeg = toNum(angles.spine_impact_deg);
-  const shaftDeg = toNum(angles.shaft_impact_deg);
-  const stanceFrac = clamp01(toNum(stance.impact_fraction));
+  const ang = a?.angles || {};
+  const st = a?.stance || {};
+  const spineDeg = toNum(ang.spine_impact_deg);
+  const shaftDeg = toNum(ang.shaft_impact_deg);
+  const stanceFrac = clamp01(toNum(st.impact_fraction));
   const { dx, dy, dw, dh } = rect;
   const toRad = (deg) => (deg * Math.PI) / 180;
 
-  // Spine tilt
   if (isFinite(spineDeg)) {
     const cx = dx + dw * 0.5, cy = dy + dh * 0.45, len = Math.min(dw, dh) * 0.35;
     const rad = toRad(-spineDeg);
@@ -382,7 +384,6 @@ function drawOverlaysOnImpact(ctx, a, rect) {
     ctx.fillText(`${round1(spineDeg)}° spine`, cx + 10, cy - 10); ctx.restore();
   }
 
-  // Shaft angle
   if (isFinite(shaftDeg)) {
     const hx = dx + dw * 0.5, hy = dy + dh * 0.7, len = Math.min(dw, dh) * 0.4;
     const rad = toRad(-shaftDeg);
@@ -393,7 +394,6 @@ function drawOverlaysOnImpact(ctx, a, rect) {
     ctx.fillText(`${round1(shaftDeg)}° shaft`, x2 + 10, y2); ctx.restore();
   }
 
-  // Stance width bar
   if (isFinite(stanceFrac)) {
     const y = dy + dh * 0.92, maxW = dw * 0.8, w = maxW * clamp01(stanceFrac), x = dx + (dw - w) / 2;
     ctx.save(); ctx.strokeStyle='#f59e0b'; ctx.lineWidth=8;
@@ -406,8 +406,4 @@ function drawOverlaysOnImpact(ctx, a, rect) {
 
 function clamp01(v){ return !isFinite(v) ? NaN : Math.max(0, Math.min(1, v)); }
 function toNum(v){ const n = Number(v); return Number.isNaN(n) ? NaN : n; }
-function round1(n){ return Math.round(n*10)/10; }
 function round2(n){ return Math.round(n*100)/100; }
-
-// Init
-checkStatus();

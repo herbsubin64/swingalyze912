@@ -1,10 +1,28 @@
 {
-  "tempo.ratio":        { "good": [2.8, 3.4], "warn": [2.6, 3.6] },
-  "tempo.backswing":    { "good": [0.6, 1.2], "warn": [0.5, 1.4] },
-  "tempo.downswing":    { "good": [0.18, 0.35], "warn": [0.15, 0.40] },
-
-  "angles.spine_impact_deg": { "good": [20, 45], "warn": [15, 50] },
-  "angles.shaft_impact_deg": { "good": [45, 70], "warn": [40, 75] },
-
-  "stance.impact_fraction":  { "good": [0.38, 0.55], "warn": [0.32, 0.62] }
+  "default": {
+    "tempo.ratio":        { "good": [2.8, 3.4], "warn": [2.6, 3.6] },
+    "tempo.backswing":    { "good": [0.6, 1.2], "warn": [0.5, 1.4] },
+    "tempo.downswing":    { "good": [0.18, 0.35], "warn": [0.15, 0.40] },
+    "angles.spine_impact_deg": { "good": [20, 45], "warn": [15, 50] },
+    "angles.shaft_impact_deg": { "good": [45, 70], "warn": [40, 75] },
+    "stance.impact_fraction":  { "good": [0.38, 0.55], "warn": [0.32, 0.62] }
+  },
+  "driver": {
+    "tempo.ratio":        { "good": [2.7, 3.3], "warn": [2.5, 3.5] },
+    "angles.spine_impact_deg": { "good": [25, 50], "warn": [20, 55] },
+    "angles.shaft_impact_deg": { "good": [40, 65], "warn": [35, 70] },
+    "stance.impact_fraction":  { "good": [0.45, 0.6], "warn": [0.4, 0.65] }
+  },
+  "7i": {
+    "tempo.ratio":        { "good": [2.8, 3.4], "warn": [2.6, 3.6] },
+    "angles.spine_impact_deg": { "good": [20, 45], "warn": [15, 50] },
+    "angles.shaft_impact_deg": { "good": [45, 70], "warn": [40, 75] },
+    "stance.impact_fraction":  { "good": [0.38, 0.55], "warn": [0.32, 0.62] }
+  },
+  "wedge": {
+    "tempo.ratio":        { "good": [2.9, 3.6], "warn": [2.7, 3.8] },
+    "angles.spine_impact_deg": { "good": [18, 40], "warn": [14, 45] },
+    "angles.shaft_impact_deg": { "good": [50, 75], "warn": [45, 80] },
+    "stance.impact_fraction":  { "good": [0.35, 0.5], "warn": [0.3, 0.55] }
+  }
 }

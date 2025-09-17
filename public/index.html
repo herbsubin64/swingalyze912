@@ -9,6 +9,15 @@
 <body>
   <header class="topbar">
     <h1>Swingalyze — API-first Coaching</h1>
+    <div class="grow"></div>
+    <label class="select-wrap" title="Club preset for coaching targets">
+      <span>Club</span>
+      <select id="clubSelect">
+        <option value="driver">Driver</option>
+        <option value="7i" selected>7-Iron</option>
+        <option value="wedge">Wedge</option>
+      </select>
+    </label>
     <div id="statusDot" class="dot offline" title="API status"></div>
   </header>
 
@@ -35,7 +44,7 @@
   </main>
 
   <footer class="foot">
-    <small>Checkpoint: Sept 17, 2025 · Branch: feat/recover · Focus: API-first coaching → PNG report + tunable ranges</small>
+    <small>Checkpoint: Sept 17, 2025 · Branch: feat/recover · Coaching: per-club tunable targets</small>
   </footer>
 
   <script src="./app.js"></script>
