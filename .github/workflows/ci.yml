@@ -15,7 +15,7 @@ jobs:
         with:
           node-version: '20'
 
-      # Build tag consumed by app.js (PNG footer traceability)
+      # Build tag for PNG footer traceability
       - name: Write build tag
         run: |
           mkdir -p public
@@ -25,8 +25,13 @@ jobs:
       - name: Verify build tag file
         run: node scripts/verify-buildtag.mjs
 
-      - name: Contract check (golden)
-        run: node scripts/verify-analyze-shape.mjs fixtures/golf1.golden.json
+      - name: Contract check (ALL goldens)
+        run: |
+          set -e
+          for f in fixtures/*.golden.json; do
+            echo "Checking $f"
+            node scripts/verify-analyze-shape.mjs "$f"
+          done
 
       - name: Validate ranges profiles
         run: node scripts/validate-ranges.mjs
@@ -37,8 +42,14 @@ jobs:
       - name: Static smoke (UI controls present)
         run: node scripts/smoke-static.mjs
 
-      - name: Optional live smoke (skips if env missing)
+      - name: Optional live compare-to-golden (skips if no env)
         env:
           ANALYZE_URL: ${{ secrets.ANALYZE_URL }}
           ANALYZE_VIDEO: ${{ secrets.ANALYZE_VIDEO }}
-        run: node scripts/smoke-live.mjs
+        run: node scripts/compare-to-golden.mjs
+
+      - name: Optional light load test (skips if no env)
+        env:
+          ANALYZE_URL: ${{ secrets.ANALYZE_URL }}
+          ANALYZE_VIDEO: ${{ secrets.ANALYZE_VIDEO }}
+        run: node scripts/load-test.mjs 5 1

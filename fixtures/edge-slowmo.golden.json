@@ -1,0 +1,8 @@
+{
+  "keyframes": { "impact": 2.40, "frames": [ { "label": "address", "t": 0.40 }, { "label": "top", "t": 2.00 }, { "label": "impact", "t": 2.40 } ] },
+  "series": {},
+  "angles": { "spine_impact_deg": 12.0, "shaft_impact_deg": 39.5 },
+  "stance": { "impact_fraction": 0.50 },
+  "tempo": { "ratio": 3.2, "backswing": 1.80, "downswing": 0.56 },
+  "coaching": ["Slow-mo: verify timebase normalization."]
+}

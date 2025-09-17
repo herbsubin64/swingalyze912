@@ -1,0 +1,8 @@
+{
+  "keyframes": { "impact": 1.12, "frames": [ { "label": "address", "t": 0.20 }, { "label": "top", "t": 0.95 }, { "label": "impact", "t": 1.12 } ] },
+  "series": {},
+  "angles": { "spine_impact_deg": 14.2, "shaft_impact_deg": 41.0 },
+  "stance": { "impact_fraction": 0.54 },
+  "tempo": { "ratio": 3.0, "backswing": 0.90, "downswing": 0.30 },
+  "coaching": ["Low light: ensure consistent frame detection."]
+}
