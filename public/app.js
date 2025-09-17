@@ -1,14 +1,17 @@
-// Swingalyze — robust client (contract banner + retries + PNG overlays + ranges/badges + JSON export)
+// Swingalyze — robust client: retries, contract banner, badges, overlays, JSON export
+// NEW: PNG options → frame strip (address•top•impact) and Hi-Res (2×)
 
 const els = {
   file: document.getElementById('fileInput'),
   analyze: document.getElementById('analyzeBtn'),
-  exportPngBtn: document.getElementById('exportPngBtn') || document.getElementById('exportBtn'),
+  exportPngBtn: document.getElementById('exportPngBtn'),
   exportJsonBtn: document.getElementById('exportJsonBtn'),
   downloadLink: document.getElementById('downloadLink'),
   statusDot: document.getElementById('statusDot'),
   video: document.getElementById('video'),
   results: document.getElementById('results'),
+  optFrameStrip: document.getElementById('optFrameStrip'),
+  optHiRes: document.getElementById('optHiRes'),
 };
 
 let analysis = null;
@@ -58,7 +61,7 @@ els.analyze?.addEventListener('click', async () => {
     const raw = await res.json();
     analysis = normalize(raw);
 
-    // Contract check → banner (same spirit as CI)
+    // Contract check → banner
     const shape = validateContract(analysis);
     renderBanner(shape);
 
@@ -82,10 +85,14 @@ els.exportPngBtn?.addEventListener('click', async () => {
   if (!analysis || !els.video?.src) return;
   const btn = els.exportPngBtn; btn.textContent='Rendering…'; btn.disabled=true;
   try {
-    const pngBlob = await renderReportPNG(analysis, els.video, (ranges?.default || ranges || {}), null);
+    const opts = {
+      includeStrip: !!els.optFrameStrip?.checked,
+      scale: els.optHiRes?.checked ? 2 : 1
+    };
+    const pngBlob = await renderReportPNG(analysis, els.video, (ranges?.default || ranges || {}), opts);
     const url = URL.createObjectURL(pngBlob);
     els.downloadLink.href = url;
-    els.downloadLink.download = 'Swingalyze-Report.png';
+    els.downloadLink.download = `Swingalyze-Report${opts.scale===2?'-2x':''}.png`;
     els.downloadLink.classList.remove('hidden'); els.downloadLink.click();
   } catch(e){ showError(e); }
   finally { btn.textContent='Export PNG Report'; btn.disabled=false; }
@@ -134,39 +141,28 @@ function renderBanner(shape){
   const items = (issues.length ? issues : warnings).map(x=>`<li>${escapeHtml(x)}</li>`).join('');
   const title = ok ? 'Contract OK' : (issues.length ? 'Contract Problems' : 'Contract Warnings');
   const html = `<div class="banner ${cls}"><h3>${title}</h3>${items ? `<ul>${items}</ul>` : ''}</div>`;
-  // prepend banner
   els.results.innerHTML = html + (els.results.innerHTML || '');
 }
-
-// Mirrors the CI expectations, but tolerant, returns issues/warnings
 function validateContract(j){
-  const issues = [];
-  const warnings = [];
-
-  function reqObject(name,val){ if(val==null) issues.push(`Missing key: ${name}`); else if(typeof val!=='object'||Array.isArray(val)) issues.push(`${name} must be an object`); }
+  const issues = [], warnings = [];
+  const reqObject = (n,v)=>{ if(v==null) issues.push(`Missing key: ${n}`); else if(typeof v!=='object'||Array.isArray(v)) issues.push(`${n} must be an object`); };
   const numOrNull = (v,n)=>{ if(v==null) return; if(typeof v!=='number'||Number.isNaN(v)) warnings.push(`${n} should be number`); };
-
   reqObject('keyframes', j.keyframes);
   reqObject('series', j.series);
   reqObject('angles', j.angles);
   reqObject('stance', j.stance);
   reqObject('tempo', j.tempo);
-
   if (j.coaching!==undefined && !Array.isArray(j.coaching)) warnings.push('coaching should be an array');
-
   numOrNull(j.angles?.spine_impact_deg, 'angles.spine_impact_deg');
   numOrNull(j.angles?.shaft_impact_deg, 'angles.shaft_impact_deg');
   numOrNull(j.tempo?.ratio, 'tempo.ratio');
   numOrNull(j.tempo?.backswing, 'tempo.backswing');
   numOrNull(j.tempo?.downswing, 'tempo.downswing');
   numOrNull(j.stance?.impact_fraction, 'stance.impact_fraction');
-
-  // keyframes: need impact or frames[].t
   let kfOk=false; const kf=j.keyframes||{};
   if (typeof kf.impact==='number') kfOk=true;
   if (Array.isArray(kf.frames) && kf.frames.some(f=>typeof f?.t==='number')) kfOk=true;
   if (!kfOk) issues.push('keyframes must include numeric "impact" or frames[].t');
-
   return { ok: issues.length===0, issues, warnings };
 }
 
@@ -227,42 +223,118 @@ function generateCoaching(a, rs){
   return dedupe(tips);
 }
 
-// ---- PNG (unchanged overlays) ----
-async function renderReportPNG(a, video, rs) {
-  const W=1200,H=1600,pad=40; const canvas=document.createElement('canvas'); canvas.width=W; canvas.height=H; const ctx=canvas.getContext('2d');
-  ctx.fillStyle='#0b0c10'; ctx.fillRect(0,0,W,H);
-  ctx.fillStyle='#e5e7eb'; ctx.font='bold 40px Inter, system-ui, sans-serif'; ctx.fillText('Swingalyze — Coaching Report', pad, pad+20);
-  ctx.font='18px Inter, system-ui, sans-serif'; ctx.fillText(new Date().toLocaleString(), pad, pad+50);
-  const impactT=pickImpactTime(a); const imgRect={x:pad,y:pad+90,w:W-pad*2,h:540}; const drawn=await drawVideoFrame(ctx, video, impactT, imgRect); drawOverlaysOnImpact(ctx, a, drawn);
-  const leftX=pad; let y=imgRect.y+imgRect.h+40; const line=30; const t=a?.tempo||{}, ang=a?.angles||{}, st=a?.stance||{};
-  ctx.font='bold 28px Inter, system-ui, sans-serif'; ctx.fillText('Key Metrics', leftX, y); y+=line; ctx.font='20px Inter, system-ui, sans-serif';
-  drawKVb(ctx,leftX,y,'Tempo (ratio)',t.ratio,'tempo.ratio',rs); y+=line;
-  drawKVb(ctx,leftX,y,'Backswing (s)',t.backswing,'tempo.backswing',rs); y+=line;
-  drawKVb(ctx,leftX,y,'Downswing (s)',t.downswing,'tempo.downswing',rs); y+=line;
-  drawKVb(ctx,leftX,y,'Spine tilt @impact (°)',ang.spine_impact_deg,'angles.spine_impact_deg',rs); y+=line;
-  drawKVb(ctx,leftX,y,'Shaft angle @impact (°)',ang.shaft_impact_deg,'angles.shaft_impact_deg',rs); y+=line;
-  drawKVb(ctx,leftX,y,'Stance width @impact',st.impact_fraction,'stance.impact_fraction',rs); y+=line;
-  const rightX=Math.floor(W*0.52); let ry=imgRect.y+imgRect.h+40; ctx.font='bold 28px Inter, system-ui, sans-serif'; ctx.fillText('Coaching Tips', rightX, ry); ry+=line; ctx.font='20px Inter, system-ui, sans-serif';
-  const coaching=Array.isArray(a?.coaching)?a.coaching:[]; if(coaching.length===0) ctx.fillText('– No tips provided –', rightX, ry);
-  else for(const tip of coaching.slice(0,10)){ ry=drawBullet(ctx,rightX,ry,tip,W-rightX-pad,line); if(ry>H-pad-60) break; }
-  ctx.globalAlpha=.8; ctx.font='16px Inter, system-ui, sans-serif'; ctx.fillText('Checkpoint: 2025-09-17 · Branch: feat/recover · Exported as PNG (client-side)', pad, H-pad); ctx.globalAlpha=1;
-  return await new Promise((resolve,reject)=>{ canvas.toBlob(b=>b?resolve(b):reject('PNG encode failed'),'image/png',0.95); });
+// ---- PNG with options: frame strip + 2× scale ----
+async function renderReportPNG(a, video, rs, opts={}) {
+  const scale = Math.max(1, Math.min(3, Number(opts.scale)||1));
+  const includeStrip = !!opts.includeStrip;
+
+  // Base logical size; we’ll scale canvas for Hi-Res
+  const W = 1200, H = includeStrip ? 1780 : 1600, pad = 40;
+  const canvas = document.createElement('canvas'); canvas.width=W*scale; canvas.height=H*scale;
+  const ctx = canvas.getContext('2d'); ctx.scale(scale, scale);
+
+  ctx.fillStyle = '#0b0c10'; ctx.fillRect(0,0,W,H);
+  ctx.fillStyle = '#e5e7eb';
+  ctx.font = 'bold 40px Inter, system-ui, sans-serif';
+  ctx.fillText('Swingalyze — Coaching Report', pad, pad+20);
+  ctx.font = '18px Inter, system-ui, sans-serif';
+  ctx.fillText(new Date().toLocaleString(), pad, pad+50);
+
+  const impactT = pickImpactTime(a);
+  const imgRect = { x: pad, y: pad+90, w: W - pad*2, h: 540 };
+  const drawn = await drawVideoFrame(ctx, video, impactT, imgRect);
+  drawOverlaysOnImpact(ctx, a, drawn);
+
+  // Metrics & coaching
+  const leftX = pad; let y = imgRect.y + imgRect.h + 40; const line = 30;
+  const t = a?.tempo || {}, ang = a?.angles || {}, st = a?.stance || {};
+  ctx.font = 'bold 28px Inter, system-ui, sans-serif'; ctx.fillText('Key Metrics', leftX, y); y += line;
+  ctx.font = '20px Inter, system-ui, sans-serif';
+  drawKVb(ctx, leftX, y, 'Tempo (ratio)', t.ratio, 'tempo.ratio', rs); y += line;
+  drawKVb(ctx, leftX, y, 'Backswing (s)', t.backswing, 'tempo.backswing', rs); y += line;
+  drawKVb(ctx, leftX, y, 'Downswing (s)', t.downswing, 'tempo.downswing', rs); y += line;
+  drawKVb(ctx, leftX, y, 'Spine tilt @impact (°)', ang.spine_impact_deg, 'angles.spine_impact_deg', rs); y += line;
+  drawKVb(ctx, leftX, y, 'Shaft angle @impact (°)', ang.shaft_impact_deg, 'angles.shaft_impact_deg', rs); y += line;
+  drawKVb(ctx, leftX, y, 'Stance width @impact', st.impact_fraction, 'stance.impact_fraction', rs); y += line;
+
+  const rightX = Math.floor(W*0.52); let ry = imgRect.y + imgRect.h + 40;
+  ctx.font = 'bold 28px Inter, system-ui, sans-serif'; ctx.fillText('Coaching Tips', rightX, ry); ry += line;
+  ctx.font = '20px Inter, system-ui, sans-serif';
+  const coaching = Array.isArray(a?.coaching) ? a.coaching : [];
+  if (coaching.length === 0) ctx.fillText('– No tips provided –', rightX, ry);
+  else for (const tip of coaching.slice(0, 10)) { ry = drawBullet(ctx, rightX, ry, tip, W - rightX - pad, line); if (ry > (includeStrip ? H - pad - 210 : H - pad - 60)) break; }
+
+  // Frame strip (address • top • impact)
+  if (includeStrip) {
+    const stripY = H - 220;
+    await drawFrameStrip(ctx, video, a, { x: pad, y: stripY, w: W - pad*2, h: 160 });
+    ctx.globalAlpha = 0.8; ctx.font = '14px Inter, system-ui, sans-serif';
+    ctx.fillText('Frames: address • top • impact', pad, stripY - 10);
+    ctx.globalAlpha = 1;
+  }
+
+  ctx.globalAlpha = 0.8; ctx.font = '16px Inter, system-ui, sans-serif';
+  ctx.fillText(`Checkpoint: 2025-09-17 · Branch: feat/recover · Exported as PNG (client-side${scale>1?', '+scale+'×':''})`, pad, H - 16);
+  ctx.globalAlpha = 1;
+
+  return await new Promise((resolve, reject) => {
+    canvas.toBlob(b => b ? resolve(b) : reject('PNG encode failed'), 'image/png', 0.95);
+  });
 }
-function drawKVb(ctx,x,y,key,val,rangeKey,rs){ const s=assess(Number(val),rangeKey,rs); const badge=statusBadgeCanvas(ctx,s.badge); ctx.fillStyle='#9ca3af'; ctx.fillText(key,x,y); ctx.fillStyle='#e5e7eb'; ctx.fillText(fmt(val),x+260,y); if(badge) badge(ctx,x+340,y-18); }
+
+async function drawFrameStrip(ctx, video, a, rect) {
+  const { x, y, w, h } = rect;
+  const gap = 12;
+  const cellW = (w - gap*2) / 3;
+  const cellH = h;
+  const times = pickFrameTimes(a);
+  const labels = ['address','top','impact'];
+  const current = video.currentTime;
+
+  for (let i=0; i<3; i++){
+    const cx = x + i*(cellW + gap);
+    ctx.save();
+    ctx.fillStyle = '#000'; ctx.fillRect(cx, y, cellW, cellH);
+    try { await seekTo(video, times[i]); } catch {}
+    const vw = video.videoWidth || 1280, vh = video.videoHeight || 720;
+    const scale = Math.min(cellW / vw, cellH / vh);
+    const dw = vw * scale, dh = vh * scale;
+    const dx = cx + (cellW - dw) / 2, dy = y + (cellH - dh) / 2;
+    ctx.drawImage(video, dx, dy, dw, dh);
+    ctx.fillStyle = '#e5e7eb'; ctx.font = 'bold 14px Inter, system-ui, sans-serif';
+    ctx.fillText(labels[i], cx + 8, y + cellH - 10);
+    ctx.restore();
+  }
+  try { await seekTo(video, current); } catch {}
+}
+
+function pickFrameTimes(a) {
+  const kf = a?.keyframes || {};
+  const frames = Array.isArray(kf.frames) ? kf.frames : [];
+  const find = (name) => frames.find(f => new RegExp(name,'i').test(f?.label || ''));
+  const impact = typeof kf.impact === 'number' ? kf.impact : (find('impact')?.t ?? 0);
+  const address = find('address')?.t ?? frames[0]?.t ?? Math.max(0, impact - 1.0);
+  const top = find('top')?.t ?? frames[Math.floor(frames.length/2)]?.t ?? Math.max(0, impact - 0.2);
+  return [address, top, impact];
+}
+
+function drawKVb(ctx, x, y, key, val, rangeKey, rs){
+  const s=assess(Number(val),rangeKey,rs); const badge=statusBadgeCanvas(ctx,s.badge);
+  ctx.fillStyle='#9ca3af'; ctx.fillText(key,x,y);
+  ctx.fillStyle='#e5e7eb'; ctx.fillText(fmt(val),x+260,y);
+  if(badge) badge(ctx,x+340,y-18);
+}
 function statusBadgeCanvas(ctx,type){
   if(!type) return null;
   const m={ ok:{bg:'#064e3b',fg:'#a7f3d0',bd:'#065f46',tx:'OK'}, warn:{bg:'#4d3700',fg:'#fde68a',bd:'#b45309',tx:'WARN'}, bad:{bg:'#3f0a0a',fg:'#fecaca',bd:'#dc2626',tx:'BAD'} }[type];
   return (c,x,y)=>{ c.save(); c.fillStyle=m.bg; c.strokeStyle=m.bd; c.lineWidth=2; roundRect(c,x,y,64,26,13); c.fill(); c.stroke(); c.fillStyle=m.fg; c.font='bold 12px Inter, system-ui, sans-serif'; c.fillText(m.tx,x+14,y+18); c.restore(); };
 }
 function roundRect(ctx,x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
+
 function drawBullet(ctx,x,y,text,maxWidth,lineHeight){ const words=String(text).split(' '); let line=''; ctx.fillStyle='#e5e7eb'; for(let n=0;n<words.length;n++){ const test=line+words[n]+' '; if(ctx.measureText(test).width>maxWidth&&n>0){ ctx.fillText(line,x,y); line=words[n]+' '; y+=lineHeight; } else line=test; } ctx.fillText(line,x,y); return y+lineHeight; }
 function pickImpactTime(a){ const kf=a?.keyframes; if(kf&&typeof kf==='object'){ if(typeof kf.impact==='number') return kf.impact; if(Array.isArray(kf.frames)){ const imp=kf.frames.find(f=>/impact/i.test(f?.label||'')); if(imp&&typeof imp.t==='number') return imp.t; if(typeof kf.frames[0]?.t==='number') return kf.frames[0].t; } } return Math.max(0,(window?.video?.currentTime??0)); }
 async function drawVideoFrame(ctx, video, t, rect){ const {x,y,w,h}=rect; const cur=video.currentTime; try{ await seekTo(video,t);}catch{} const vw=video.videoWidth||1280, vh=video.videoHeight||720; const s=Math.min(w/vw,h/vh); const dw=vw*s, dh=vh*s; const dx=x+(w-dw)/2, dy=y+(h-dh)/2; ctx.save(); ctx.fillStyle='#000'; ctx.fillRect(x,y,w,h); ctx.drawImage(video,dx,dy,dw,dh); ctx.restore(); try{ await seekTo(video,cur);}catch{} return {dx,dy,dw,dh}; }
 function seekTo(video,t){ return new Promise((res,rej)=>{ const onS=()=>{video.removeEventListener('seeked',onS); res();}; const onE=()=>{video.removeEventListener('error',onE); rej('seek error');}; video.addEventListener('seeked',onS,{once:true}); video.addEventListener('error',onE,{once:true}); try{ video.currentTime=Math.max(0,t);}catch{ rej('seek set failed'); } setTimeout(()=>{ video.removeEventListener('seeked',onS); res(); },1200); }); }
-function drawOverlaysOnImpact(ctx,a,rect){ const ang=a?.angles||{}, st=a?.stance||{}; const spineDeg=toNum(ang.spine_impact_deg), shaftDeg=toNum(ang.shaft_impact_deg), stanceFrac=clamp01(toNum(st.impact_fraction)); const {dx,dy,dw,dh}=rect; const toRad=d=>(d*Math.PI)/180;
-  if(isFinite(spineDeg)){ const cx=dx+dw*.5, cy=dy+dh*.45, L=Math.min(dw,dh)*.35, r=toRad(-spineDeg); const x1=cx-Math.cos(r)*L, y1=cy-Math.sin(r)*L, x2=cx+Math.cos(r)*L, y2=cy+Math.sin(r)*L; ctx.save(); ctx.strokeStyle='#10b981'; ctx.lineWidth=5; ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke(); ctx.fillStyle='#10b981'; ctx.font='bold 22px Inter, system-ui, sans-serif'; ctx.fillText(`${Math.round(spineDeg*10)/10}° spine`, cx+10, cy-10); ctx.restore(); }
-  if(isFinite(shaftDeg)){ const hx=dx+dw*.5, hy=dy+dh*.7, L=Math.min(dw,dh)*.4, r=toRad(-shaftDeg); const x1=hx, y1=hy, x2=hx+Math.cos(r)*L, y2=hy+Math.sin(r)*L; ctx.save(); ctx.strokeStyle='#3b82f6'; ctx.lineWidth=5; ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke(); ctx.fillStyle='#3b82f6'; ctx.font='bold 22px Inter, system-ui, sans-serif'; ctx.fillText(`${Math.round(shaftDeg*10)/10}° shaft`, x2+10, y2); ctx.restore(); }
-  if(isFinite(stanceFrac)){ const y=dy+dh*.92, maxW=dw*.8, w=maxW*clamp01(stanceFrac), x=dx+(dw-w)/2; ctx.save(); ctx.strokeStyle='#f59e0b'; ctx.lineWidth=8; ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x+w,y); ctx.stroke(); ctx.beginPath(); ctx.moveTo(x,y-10); ctx.lineTo(x,y+10); ctx.moveTo(x+w,y-10); ctx.lineTo(x+w,y+10); ctx.stroke(); ctx.fillStyle='#fbbf24'; ctx.font='bold 20px Inter, system-ui, sans-serif'; ctx.fillText(`stance ${fmt(stanceFrac)}`, x+w+12, y+6); ctx.restore(); }
-}
-function clamp01(v){ return !isFinite(v)?NaN:Math.max(0,Math.min(1,v)); }
-function toNum(v){ const n=Number(v); return Number.isNaN(n)?NaN:n; }
+
+// Utilities
+function showError(msg) { els.results.innerHTML = `<div class="metric"><span class="label">Error</span><div class="code">${escapeHtml(msg)}</div></div>`; }
