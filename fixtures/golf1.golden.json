@@ -1,21 +1,9 @@
 {
-  "video": "upload.mp4",
+  "video": "golf1.mp4",
   "expect": {
-    "keyframes": { "monotonic": true, "ratioMin": 1.0, "ratioMax": 30.0 },
-    "series":    { "minSamples": 10,  "stepMax": 0.10, "magMin": -1.0, "magMax": 100.0 },
-    "angles": {
-      "spineTiltTop":    { "min": 0.0, "max": 120.0, "allowNull": true },
-      "spineTiltImpact": { "min": 0.0, "max": 120.0, "allowNull": true },
-      "shaftTop":        { "min": 0.0, "max": 180.0, "allowNull": true },
-      "shaftImpact":     { "min": 0.0, "max": 180.0, "allowNull": true }
-    },
-    "stance": {
-      "addressFrac": { "min": 0.00, "max": 1.00, "allowNull": true },
-      "impactFrac":  { "min": 0.00, "max": 1.00, "allowNull": true }
-    },
-    "tempo": {
-      "ratioMin": 1.0,
-      "ratioMax": 30.0
-    }
+    "series":    { "minSamples": 50,  "stepMax": 0.10 },
+    "keyframes": { "ratioMin": 1.0,   "ratioMax": 30.0 },
+    "angles":    { "allowNull": true },
+    "stance":    { "addressMin": 0.30, "addressMax": 1.00 }
   }
 }

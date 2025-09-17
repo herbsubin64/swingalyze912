@@ -1,0 +1,16 @@
+{
+  "Driver": {
+    "spineTop":    { "target": 20, "band": 8 },
+    "spineImpact": { "target": 25, "band": 10 },
+    "shaftTop":    { "target": 50, "band": 12 },
+    "shaftImpact": { "target": 25, "band": 8 },
+    "tempo":       { "backswing": [2.8, 5.0], "ratio": [2.0, 4.0] }
+  },
+  "Iron7": {
+    "spineTop":    { "target": 18, "band": 8 },
+    "spineImpact": { "target": 22, "band": 10 },
+    "shaftTop":    { "target": 57, "band": 12 },
+    "shaftImpact": { "target": 30, "band": 10 },
+    "tempo":       { "backswing": [2.2, 4.0], "ratio": [2.5, 4.5] }
+  }
+}
