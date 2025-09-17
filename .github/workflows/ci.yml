@@ -1,0 +1,19 @@
+name: swingalyze-ci
+
+on:
+  push:
+    branches: [ feat/recover ]
+  pull_request:
+    branches: [ feat/recover ]
+
+jobs:
+  contract-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Node (LTS)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Verify analyze contract against golden
+        run: node scripts/verify-analyze-shape.mjs fixtures/golf1.golden.json
