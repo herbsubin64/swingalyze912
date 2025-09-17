@@ -1,0 +1,10 @@
+{
+  "tempo.ratio":        { "good": [2.8, 3.4], "warn": [2.6, 3.6] },
+  "tempo.backswing":    { "good": [0.6, 1.2], "warn": [0.5, 1.4] },
+  "tempo.downswing":    { "good": [0.18, 0.35], "warn": [0.15, 0.40] },
+
+  "angles.spine_impact_deg": { "good": [20, 45], "warn": [15, 50] },
+  "angles.shaft_impact_deg": { "good": [45, 70], "warn": [40, 75] },
+
+  "stance.impact_fraction":  { "good": [0.38, 0.55], "warn": [0.32, 0.62] }
+}
