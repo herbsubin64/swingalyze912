@@ -1,6 +1,6 @@
-// Swingalyze — robust client: retries, contract banner, badges, overlays, JSON/CSV export
+// Swingalyze — robust client: configurable API base, retries, contract banner, badges, overlays, JSON/CSV export
 // PNG options: frame strip (address•top•impact) and Hi-Res (2×)
-// Improvements: show build tag in header; revoke blob URLs to prevent leaks.
+// Improvements: API base selector in header, build tag in header, revoke blob URLs.
 
 const els = {
   file: document.getElementById('fileInput'),
@@ -12,7 +12,8 @@ const els = {
   exportJsonBtn: document.getElementById('exportJsonBtn'),
   downloadLink: document.getElementById('downloadLink'),
   statusDot: document.getElementById('statusDot'),
-  buildTag: document.getElementById('buildTag'),
+  buildTagEl: document.getElementById('buildTag'),
+  apiBaseInput: document.getElementById('apiBaseInput'),
   video: document.getElementById('video'),
   results: document.getElementById('results'),
   optFrameStrip: document.getElementById('optFrameStrip'),
@@ -26,12 +27,40 @@ let lastPngBlob = null;
 let lastDownloadUrl = null;
 let buildTag = (typeof window!=='undefined' && window.__BUILD__) ? window.__BUILD__ : 'dev';
 
+// ---------- API Base helpers ----------
+function getApiBase(){
+  // Priority: ?api=... (once) → localStorage → ''
+  try {
+    const u = new URL(window.location.href);
+    const fromQuery = u.searchParams.get('api');
+    if (fromQuery) { localStorage.setItem('apiBase', fromQuery); u.searchParams.delete('api'); history.replaceState({},'',u.toString()); }
+  } catch {}
+  try { return (localStorage.getItem('apiBase') || '').trim(); } catch { return ''; }
+}
+function setApiBase(v){
+  try { localStorage.setItem('apiBase', (v||'').trim()); } catch {}
+}
+function apiUrl(path){
+  const base = getApiBase();
+  try { return new URL(path, base || window.location.origin).toString(); }
+  catch { return path; }
+}
+
 init();
 
 async function init(){
+  // Init API base input
+  try {
+    if (els.apiBaseInput) {
+      els.apiBaseInput.value = getApiBase();
+      els.apiBaseInput.addEventListener('change', async () => { setApiBase(els.apiBaseInput.value); await checkStatus(true); });
+      els.apiBaseInput.addEventListener('keyup', async (e)=>{ if(e.key==='Enter'){ setApiBase(els.apiBaseInput.value); await checkStatus(true); }});
+    }
+  } catch {}
+
   await Promise.all([checkStatus(), loadRanges(), loadBuildTag()]);
-  // show build tag in header
-  try{ if (els.buildTag) els.buildTag.textContent = String(buildTag || 'dev'); }catch{}
+  try{ if (els.buildTagEl) els.buildTagEl.textContent = String(buildTag || 'dev'); }catch{}
+
   // Mobile-friendly defaults: disable Hi-Res on small screens (less memory)
   try{
     if (window.matchMedia && window.matchMedia('(max-width: 640px)').matches) {
@@ -42,7 +71,12 @@ async function init(){
 }
 
 // ---------- Status ----------
-async function checkStatus() { try { const r = await fetch('/api/status',{cache:'no-store'}); setDot(r.ok); } catch { setDot(false);} }
+async function checkStatus(force=false){
+  try {
+    const r = await fetch(apiUrl('/api/status'), { cache: force?'no-store':'default' });
+    setDot(r.ok);
+  } catch { setDot(false); }
+}
 function setDot(up){ if(!els.statusDot) return; els.statusDot.classList.toggle('online', !!up); els.statusDot.classList.toggle('offline', !up); }
 
 // ---------- Build tag ----------
@@ -50,7 +84,7 @@ async function loadBuildTag(){
   try {
     const r = await fetch('./build.json', {cache:'no-store'});
     if (r.ok) { const j = await r.json(); if (typeof j?.sha === 'string') buildTag = j.sha.slice(0,7); }
-  } catch { /* fallback 'dev' already set */ }
+  } catch {}
 }
 
 // ---------- Ranges ----------
@@ -64,7 +98,6 @@ function setExportEnabled(on){
   if(els.exportCsvBtn) els.exportCsvBtn.disabled=!on;
   if(els.exportJsonBtn) els.exportJsonBtn.disabled=!on;
   if(els.downloadLink) els.downloadLink.classList.add('hidden');
-  // revoke any previous one-shot download URL
   revokeLastDownloadUrl();
 }
 
@@ -98,21 +131,20 @@ els.json?.addEventListener('change', async () => {
   }
 });
 
-// ---------- Analyze (timeout + retry + mapped errors) ----------
+// ---------- Analyze (uses API base) ----------
 els.analyze?.addEventListener('click', async () => {
   const file = els.file?.files?.[0]; if(!file) return;
   setAnalyzeEnabled(false); els.analyze.textContent = 'Analyzing…';
   try {
     const fd = new FormData(); fd.append('video', file);
-    const res = await fetchWithRetry('/api/analyze', { method:'POST', body: fd }, { attempts: 2, timeoutMs: 60000 });
+    const url = apiUrl('/api/analyze');
+    const res = await fetchWithRetry(url, { method:'POST', body: fd }, { attempts: 2, timeoutMs: 30000 });
     if (!res.ok) throw await mapHttpError(res);
     const raw = await res.json();
     analysis = normalize(raw);
 
-    // Contract check → banner
     renderBanner(validateContract(analysis));
 
-    // Coaching: merge generator + normalize to strings + dedupe
     const baseCoach = Array.isArray(analysis.coaching) ? analysis.coaching : [];
     const extra = generateCoaching(analysis, (ranges?.default || ranges || {}));
     analysis.coaching = dedupe(toTips([...baseCoach, ...extra]));
@@ -126,6 +158,7 @@ els.analyze?.addEventListener('click', async () => {
   } finally {
     els.analyze.textContent = 'Analyze';
     setAnalyzeEnabled(true);
+    checkStatus(true);
   }
 });
 
@@ -142,7 +175,6 @@ els.exportPngBtn?.addEventListener('click', async () => {
   finally { btn.textContent='Export PNG Report'; btn.disabled=false; }
 });
 
-// One-tap Share (mobile). Falls back to Export if not supported.
 els.sharePngBtn?.addEventListener('click', async () => {
   if (!analysis || !('share' in navigator)) { els.exportPngBtn?.click(); return; }
   try{
@@ -153,7 +185,6 @@ els.sharePngBtn?.addEventListener('click', async () => {
     const file = new File([lastPngBlob], 'Swingalyze-Report.png', { type: 'image/png' });
     await navigator.share({ files: [file], title: 'Swingalyze — Coaching Report', text: 'Swing report' });
   } catch(e){
-    // graceful fallback to download
     const url = URL.createObjectURL(lastPngBlob);
     replaceDownloadUrl(url, 'Swingalyze-Report.png');
   }
@@ -204,7 +235,7 @@ function revokeLastDownloadUrl(){
 }
 
 // ---------- Networking helpers ----------
-async function fetchWithRetry(url, options={}, {attempts=2, timeoutMs=60000}={}){
+async function fetchWithRetry(url, options={}, {attempts=2, timeoutMs=30000}={}){
   let last;
   for (let i=0;i<attempts;i++){
     try{
@@ -344,7 +375,7 @@ function generateCoaching(a, rs){
   return tips;
 }
 
-// ---------- PNG with options: frame strip + 2× scale ----------
+// ---------- PNG with options ----------
 async function renderReportPNG(a, video, rs, opts={}) {
   const scale = Math.max(1, Math.min(3, Number(opts.scale)||1));
   const includeStrip = !!opts.includeStrip;

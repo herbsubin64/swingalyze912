@@ -4,12 +4,16 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Swingalyze — Coaching (Checkpoint 2025-09-17)</title>
-  <link rel="stylesheet" href="./styles.css?v=20250917-06" />
+  <link rel="stylesheet" href="./styles.css?v=20250917-07" />
 </head>
 <body>
   <header class="topbar">
     <h1>Swingalyze — API-first Coaching</h1>
     <div class="spacer"></div>
+    <label class="opt" title="Analyzer base URL (saved in your browser)">
+      API:
+      <input id="apiBaseInput" type="text" placeholder="(relative) or https://analyzer.example.com" style="min-width:260px" />
+    </label>
     <span id="buildTag" class="buildtag" title="Build tag">dev</span>
     <div id="statusDot" class="dot offline" title="API status"></div>
   </header>
@@ -53,6 +57,6 @@
     // Fallback build tag; app.js will load public/build.json and overwrite.
     window.__BUILD__ = window.__BUILD__ || 'dev';
   </script>
-  <script src="./app.js?v=20250917-06"></script>
+  <script src="./app.js?v=20250917-07"></script>
 </body>
 </html>
