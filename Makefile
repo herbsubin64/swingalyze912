@@ -4,11 +4,14 @@
 #   make                 # run-all (skips live if env missing)
 #   make smoke           # static/UI checks only
 #   make live            # live compare + load test (requires env)
+#   make serve           # serve /public on 0.0.0.0:3000 for Codespaces
+#   make serve3001       # serve /public on 3001 if 3000 is busy
+#   make dev-analyzer    # start stub analyzer on 0.0.0.0:3001 (CORS on)
 #   ANALYZE_URL=... ANALYZE_VIDEO=clip.mp4 make harvest NAME=edge-field-01
 
 SHELL := /bin/bash
 
-.PHONY: all run-all smoke live contract bounds ranges coaching ui-signatures status compare load harvest
+.PHONY: all run-all smoke live contract bounds ranges coaching ui-signatures status compare load harvest serve serve3001 dev-analyzer
 
 all: run-all
 
@@ -55,3 +58,14 @@ harvest:
 	@node scripts/harvest-golden.mjs "$$NAME"
 	@node scripts/verify-analyze-shape.mjs "fixtures/$$NAME.golden.json"
 	@git add "fixtures/$$NAME.golden.json" && git commit -m "Goldens: add $$NAME" && git push
+
+# Serve the static UI (Codespaces-friendly: binds 0.0.0.0)
+serve:
+	@cd public && python3 -m http.server 3000 --bind 0.0.0.0
+
+serve3001:
+	@cd public && python3 -m http.server 3001 --bind 0.0.0.0
+
+# Dev analyzer stub (CORS enabled)
+dev-analyzer:
+	@node scripts/dev-analyzer.mjs
