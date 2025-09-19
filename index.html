@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Swingalyze Coach v2.3.0</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>Swingalyze Coach v2.3.0</h1>
+    <div id="status">Status: …</div>
+  </header>
+
+  <main>
+    <section class="bar">
+      <label class="btn">
+        <input id="video" type="file" accept="video/*" hidden>
+        Upload video
+      </label>
+      <button id="analyze" class="btn">Analyze</button>
+      <button id="export" class="btn">Export PNG Report</button>
+    </section>
+
+    <section class="stage">
+      <video id="player" playsinline controls></video>
+      <canvas id="overlay"></canvas>
+    </section>
+
+    <section class="tools">
+      <div class="row">
+        <button class="btn" data-step="-1">⟵ 1 frame</button>
+        <button class="btn" data-step="1">1 frame ⟶</button>
+        <select id="drawMode">
+          <option value="none">No drawing</option>
+          <option value="spine">Spine tilt (green)</option>
+          <option value="shaft">Lead-arm / shaft (blue)</option>
+          <option value="ground">Ground / stance (yellow)</option>
+        </select>
+        <button id="undo" class="btn ghost">Undo</button>
+        <button id="clear" class="btn ghost">Clear</button>
+      </div>
+    </section>
+
+    <section class="panels">
+      <div>
+        <h3>Metrics</h3>
+        <pre id="metrics"></pre>
+      </div>
+      <div>
+        <h3>Coaching Tips</h3>
+        <div id="tips" class="tips"></div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <small>API compatible: <code>/api/status</code>, <code>/api/analyze?g=golf1</code>.</small>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>
