@@ -1,6 +1,6 @@
 /**
- * Swingalyze Coach v2.5.0 (2025-09-19)
- * Full rewrite; API-compatible with v2.3/2.4. UI adds keyframe slots & per-slot overlays.
+ * Swingalyze Coach v2.6.0 (2025-09-19)
+ * API-compatible with v2.3/2.4/2.5 (UI-only upgrades).
  * Endpoints:
  *   GET  /api/status
  *   POST /api/analyze?g=golf1
@@ -64,7 +64,6 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // static
   const safe = pathname === '/' ? 'index.html' : pathname.slice(1);
   const filePath = path.join(process.cwd(), safe);
   const ext = path.extname(filePath).toLowerCase();

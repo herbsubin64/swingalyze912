@@ -3,12 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Swingalyze Coach v2.5.0</title>
+  <title>Swingalyze Coach v2.6.0</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <header>
-    <h1>Swingalyze Coach v2.5.0</h1>
+    <h1>Swingalyze Coach v2.6.0</h1>
     <div id="status">Status: …</div>
   </header>
 
@@ -19,7 +19,8 @@
         Upload video
       </label>
       <button id="analyze" class="btn">Analyze</button>
-      <button id="export" class="btn">Export PNG Report</button>
+      <button id="exportPng" class="btn">Export PNG Report</button>
+      <button id="exportJson" class="btn">Export JSON Report</button>
     </section>
 
     <section class="slots">
@@ -51,7 +52,7 @@
           <option value="ground">Ground / stance (yellow)</option>
         </select>
         <button id="undo" class="btn ghost">Undo</button>
-        <button id="clear" class="btn ghost">Clear All</button>
+        <button id="clearAll" class="btn ghost">Clear All</button>
       </div>
       <div class="row hint">Tip: pick a keyframe, hit <b>Set Frame</b> to capture a thumbnail, then draw your spine/shaft/ground lines for that slot.</div>
     </section>
