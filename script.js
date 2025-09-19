@@ -12,6 +12,7 @@
   const undoBtn = document.getElementById('undo');
   const clearAllBtn = document.getElementById('clearAll');
   const angleTable = document.getElementById('angleTable');
+  const analyzerAngles = document.getElementById('analyzerAngles');
   const metricsEl = document.getElementById('metrics');
   const tipsEl = document.getElementById('tips');
   const setFrameBtn = document.getElementById('setFrame');
@@ -119,23 +120,23 @@
   clearSlotBtn.addEventListener('click',()=>{ state[currentSlot].lines=[]; state[currentSlot].thumb=null; state[currentSlot].angles=null; draw(); renderAngleCards(); });
 
   // Slots
-  document.querySelectorAll('.slot').forEach(btn => btn.addEventListener('click',()=>selectSlot(btn.dataset.slot)));
+  slotButtons.forEach(btn => btn.addEventListener('click',()=>selectSlot(btn.dataset.slot)));
   selectSlot('address');
 
   // Set frame thumbnail
-  document.getElementById('setFrame').addEventListener('click',()=>{
+  setFrameBtn.addEventListener('click',()=>{
     const w=320,h=180; const c=document.createElement('canvas'); c.width=w; c.height=h;
     const cx=c.getContext('2d'); try{ cx.drawImage(player,0,0,w,h);}catch{}
     state[currentSlot].frameSec=player.currentTime||0; state[currentSlot].thumb=c.toDataURL('image/png');
   });
 
-  // Frame step buttons
+  // Frame step
   document.querySelectorAll('[data-step]').forEach(btn=>{
     btn.addEventListener('click',()=>{ const step=Number(btn.getAttribute('data-step'))||0; const fps=30;
       player.currentTime=Math.max(0, player.currentTime + step*(1/fps)); });
   });
 
-  // Upload video -> /api/upload
+  // Upload -> /api/upload
   videoInput.addEventListener('change', async (e)=>{
     const file=e.target.files[0]; if(!file) return;
     const url=URL.createObjectURL(file); player.src=url; player.play();
@@ -143,31 +144,56 @@
     const j=await r.json(); if(j.ok) window.currentJobId=j.jobId;
   });
 
-  // Analyze -> calls server (python pose or fallback)
+  // Analyze -> shows analyzer angles with confidence badges + tips w/ gating
   analyzeBtn.addEventListener('click', async ()=>{
     const body = window.currentJobId ? { jobId: window.currentJobId } : {};
     const r = await fetch('/api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const j = await r.json();
     lastAnalyze = j;
-    metricsEl.textContent = JSON.stringify(j,null,2);
+    metricsEl.textContent = JSON.stringify(j, null, 2);
+
+    // Show analyzer angles (if confident)
+    analyzerAngles.innerHTML='';
+    const pc = (j.pose && typeof j.pose.confidence === 'number') ? j.pose.confidence : 0;
+    const tempoC = (j.tempo && typeof j.tempo.confidence === 'number') ? j.tempo.confidence : 0;
+    const badge = (c)=>`<span class="badge ${c>=0.7?'high':c>=0.5?'mid':'low'}">conf ${Math.round(c*100)}%</span>`;
+    if (pc >= 0.5 && j.pose?.angles) {
+      const s = j.pose.angles.spineToVertical_deg, a = j.pose.angles.leadArmToGround_deg;
+      analyzerAngles.innerHTML = `
+        <div class="card"><h4>Spine vs Vertical (analyzer) ${badge(pc)}</h4><div class="val">${s!=null? s.toFixed(1)+'°':'—'}</div><div class="ideal">2°–6° at impact</div></div>
+        <div class="card"><h4>Lead-arm vs Ground (analyzer) ${badge(pc)}</h4><div class="val">${a!=null? a.toFixed(1)+'°':'—'}</div><div class="ideal">~60°–100°</div></div>`;
+    } else {
+      analyzerAngles.innerHTML = `<div class="card warn"><h4>Analyzer Angles</h4><div>Low confidence — retake with stable camera, full body in frame.</div></div>`;
+    }
+
+    // Coaching tips (tempo with gating)
     tipsEl.innerHTML = '';
-    // Use tempo in tips; (optional) we could also use j.pose.angles later
-    const tips = mapCoachingTips(j);
+    const tips = [];
+    if (tempoC < 0.4) tips.push("Tempo provisional — lighting/camera may reduce accuracy.");
+    if (j.tempo) {
+      const r = Number(j.tempo.ratio||0);
+      if (r===0) tips.push("Record a swing or step frames to estimate tempo.");
+      else if (r>=2.8 && r<=3.2) tips.push("Tempo ~3:1 — money. Keep the same cadence.");
+      else if (r<2.8) tips.push("Tempo fast (<3:1). Count 'one-two' up, 'one' down.");
+      else tips.push("Tempo slow (>3:1). Start the downswing sooner.");
+    }
+    if (pc >= 0.5 && j.pose?.angles) {
+      const s=j.pose.angles.spineToVertical_deg, a=j.pose.angles.leadArmToGround_deg;
+      if (s!=null) {
+        if (s<2) tips.push("Add a touch more spine tilt for compression.");
+        else if (s<=6) tips.push("Spine tilt looks solid into impact.");
+        else tips.push("A lot of spine tilt — keep trail side taller to avoid chunks.");
+      }
+      if (a!=null) {
+        if (a<60) tips.push("Lead arm shallow / handle high — feel hinge then rotate.");
+        else if (a<=100) tips.push("Lead-arm angle in a playable window.");
+        else tips.push("Lead arm steep / handle low — soften grip and rotate through.");
+      }
+    }
     for(const t of tips){ const div=document.createElement('div'); div.className='tip'; div.textContent=t; tipsEl.appendChild(div); }
   });
 
-  function mapCoachingTips(j){
-    const tips=[]; const t=j.tempo||{}; const r=Number(t.ratio||0);
-    if (r===0) tips.push("Record a swing or step frames to estimate tempo.");
-    else if (r>=2.8 && r<=3.2) tips.push("Tempo ~3:1 — money. Keep the same cadence through transition.");
-    else if (r<2.8) tips.push("Tempo fast (<3:1). Count 'one-two' up, 'one' down to lengthen backswing.");
-    else if (r>3.2) tips.push("Tempo slow (>3:1). Start the downswing sooner after the top.");
-    if ((t.down||0)<0.22) tips.push("Downswing very quick — feel a smoother shift before firing the arms.");
-    if ((t.back||0)>1.2) tips.push("Backswing long — shorten to improve strike consistency.");
-    return tips;
-  }
-
-  // PNG export
+  // Export PNG
   exportPngBtn.addEventListener('click', ()=>{
     const names=slots; const w=320,h=180,bannerH=120;
     const canvas=document.createElement('canvas'); canvas.width=w*names.length; canvas.height=h+bannerH;
@@ -181,10 +207,7 @@
         const sx=w/(player.videoWidth||w), sy=h/(player.videoHeight||h);
         cx.save(); cx.translate(pi*w,0); cx.lineWidth=2;
         for(const ln of state[slotName].lines){
-          if(ln.mode==='spine') cx.strokeStyle='green';
-          else if(ln.mode==='shaft') cx.strokeStyle='blue';
-          else if(ln.mode==='ground') cx.strokeStyle='goldenrod';
-          else continue;
+          if(ln.mode==='spine') cx.strokeStyle='green'; else if(ln.mode==='shaft') cx.strokeStyle='blue'; else if(ln.mode==='ground') cx.strokeStyle='goldenrod'; else continue;
           cx.beginPath(); cx.moveTo(ln.x1*sx,ln.y1*sy); cx.lineTo(ln.x2*sx,ln.y2*sy); cx.stroke();
         }
         cx.fillStyle='#fff'; cx.font='13px system-ui'; cx.fillText(slotName,8,16); cx.restore();
@@ -193,15 +216,15 @@
     cx.fillStyle='#fff'; cx.fillRect(0,h,canvas.width,bannerH);
     cx.fillStyle='#111'; cx.font='14px system-ui';
     const ts=new Date().toLocaleString();
-    cx.fillText('Swingalyze Coach v2.9.0 — 5-keyframe report',10,h+24);
+    cx.fillText('Swingalyze Coach v3.0.0 — 5-keyframe report',10,h+24);
     cx.fillText(`Generated: ${ts}`,10,h+46);
-    cx.fillText('Notes: Frames via "Set Frame"; overlays per-slot; tempo/pose from analyzer if available.',10,h+68);
+    cx.fillText('Notes: Per-slot frames; analyzer uses horizon leveling + improved impact.',10,h+68);
     setTimeout(()=>{ const url=canvas.toDataURL('image/png'); const a=document.createElement('a'); a.href=url; a.download='swingalyze_report.png'; a.click(); },100);
   });
 
-  // JSON export
+  // Export JSON
   exportJsonBtn.addEventListener('click', ()=>{
-    const payload={ build:'Swingalyze Coach v2.9.0', generated_at:new Date().toISOString(), analyzer:lastAnalyze||null, upload_job_id: window.currentJobId||null, slots:{} };
+    const payload={ build:'Swingalyze Coach v3.0.0', generated_at:new Date().toISOString(), analyzer:lastAnalyze||null, upload_job_id: window.currentJobId||null, slots:{} };
     for(const s of slots){ payload.slots[s]={ frame_sec: state[s].frameSec, thumbnail_png: state[s].thumb, overlays: state[s].lines, measured_angles: state[s].angles }; }
     const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
     const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='swingalyze_report.json'; a.click(); URL.revokeObjectURL(url);

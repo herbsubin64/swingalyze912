@@ -1,10 +1,10 @@
 /**
- * Swingalyze Coach v2.9.0 (2025-09-19)
- * Real analyzer via Python Pose worker (MediaPipe+OpenCV) with safe fallback.
- * Endpoints:
+ * Swingalyze Coach v3.0.0 (2025-09-19)
+ * Robust analyzer: improved impact detection + horizon leveling (auto Hough).
+ * Endpoints unchanged:
  *  GET  /api/status
  *  POST /api/upload           -> { ok, jobId, path }
- *  POST /api/analyze          -> tries python worker -> fallback to mock
+ *  POST /api/analyze          -> { ok, tempo, pose, ... }
  *  GET  /api/job/:id/status
  */
 const http = require('http');
@@ -17,7 +17,18 @@ const { spawn } = require('child_process');
 const PORT = process.env.PORT || 3001;
 const SERVICE = 'swingalyze-api';
 const UPLOAD_DIR = path.join(process.cwd(), 'uploads');
+const MAX_UPLOAD_BYTES = 200 * 1024 * 1024; // 200MB
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR);
+
+/** clean uploads older than 24h **/
+(function cleanOld(){ try{
+  const now = Date.now();
+  for (const f of fs.readdirSync(UPLOAD_DIR)) {
+    const p = path.join(UPLOAD_DIR, f);
+    const st = fs.statSync(p);
+    if (st.isFile() && now - st.mtimeMs > 24*3600*1000) fs.unlinkSync(p);
+  }
+} catch(_){} })();
 
 const jobs = new Map(); // id -> { status, path, created, result? }
 
@@ -33,42 +44,34 @@ function serveFile(res, filePath, contentType='text/html') {
 }
 function uid() { return crypto.randomBytes(8).toString('hex'); }
 
-function makeMockAnalyze(extra = {}) {
-  return {
-    ok: true,
-    received: { hasVideo: !!extra.hasVideo, jobId: extra.jobId || null },
-    keyframes: ["address","club-parallel","top","impact","follow-through"],
-    tempo: { back: 0.84, down: 0.28, ratio: 3.0, confidence: 0.30 },
-    pose: { angles: { spineToVertical_deg: null, leadArmToGround_deg: null }, confidence: 0.0 },
-    ts: Date.now(),
-    variant: 'golf1'
-  };
-}
-
-function runPythonAnalyzer(videoPath, timeoutMs = 20000) {
+function runPythonAnalyzer(videoPath, timeoutMs = 25000) {
   return new Promise((resolve, reject) => {
     const child = spawn('python3', ['analyzer_pose.py', videoPath], {
-      cwd: process.cwd(),
-      env: { ...process.env, PYTHONUNBUFFERED: '1' }
+      cwd: process.cwd(), env: { ...process.env, PYTHONUNBUFFERED: '1' }
     });
     let out = '', err = '';
-    const t = setTimeout(() => {
-      child.kill('SIGKILL');
-      reject(new Error('python analyzer timeout'));
-    }, timeoutMs);
-
+    const t = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('python analyzer timeout')); }, timeoutMs);
     child.stdout.on('data', d => out += d.toString());
     child.stderr.on('data', d => err += d.toString());
     child.on('close', code => {
       clearTimeout(t);
       if (code === 0) {
-        try { resolve(JSON.parse(out)); }
-        catch (e) { reject(new Error('python json parse fail')); }
-      } else {
-        reject(new Error(err || `python exit ${code}`));
-      }
+        try { resolve(JSON.parse(out)); } catch { reject(new Error('python json parse fail')); }
+      } else { reject(new Error(err || `python exit ${code}`)); }
     });
   });
+}
+
+function mockResult(extra = {}) {
+  return {
+    ok: true,
+    received: { hasVideo: !!extra.hasVideo, jobId: extra.jobId || null },
+    keyframes: ["address","club-parallel","top","impact","follow-through"],
+    tempo: { back: 0.84, down: 0.28, ratio: 3.0, confidence: 0.30 },
+    pose:  { angles: { spineToVertical_deg: null, leadArmToGround_deg: null }, confidence: 0.0 },
+    ts: Date.now(),
+    variant: 'golf1'
+  };
 }
 
 const MIME = {
@@ -84,12 +87,12 @@ const server = http.createServer((req, res) => {
   const parsed = url.parse(req.url, true);
   const pathname = parsed.pathname;
 
-  // status
+  // health
   if (req.method === 'GET' && pathname === '/api/status') {
     return sendJSON(res, 200, { ok: true, ts: Date.now(), service: SERVICE });
   }
 
-  // upload raw video
+  // upload (raw bytes) with size limit
   if (req.method === 'POST' && pathname === '/api/upload') {
     const ct = (req.headers['content-type'] || '').toLowerCase();
     if (!ct.startsWith('video/') && ct !== 'application/octet-stream') {
@@ -98,8 +101,19 @@ const server = http.createServer((req, res) => {
     const id = uid();
     const filePath = path.join(UPLOAD_DIR, `${id}.mp4`);
     const ws = fs.createWriteStream(filePath);
+    let written = 0;
+    req.on('data', chunk => {
+      written += chunk.length;
+      if (written > MAX_UPLOAD_BYTES) {
+        ws.destroy(); fs.unlink(filePath, ()=>{});
+        req.destroy();
+      }
+    });
     req.pipe(ws);
     ws.on('finish', () => {
+      if (written > MAX_UPLOAD_BYTES) {
+        return sendJSON(res, 413, { ok:false, error:`File too large (> ${Math.round(MAX_UPLOAD_BYTES/1024/1024)}MB)` });
+      }
       jobs.set(id, { status:'queued', path:filePath, created: Date.now() });
       return sendJSON(res, 200, { ok:true, jobId: id, path: filePath });
     });
@@ -115,7 +129,7 @@ const server = http.createServer((req, res) => {
     return sendJSON(res, 200, { ok:true, status: job.status });
   }
 
-  // analyze (python pose -> fallback)
+  // analyze
   if (req.method === 'POST' && pathname === '/api/analyze') {
     let body = '';
     req.on('data', c => body += c);
@@ -125,37 +139,31 @@ const server = http.createServer((req, res) => {
       const jobId = payload.jobId || null;
       const job = jobId ? jobs.get(jobId) : null;
 
-      if (!job || !job.path) {
-        return sendJSON(res, 200, makeMockAnalyze({ hasVideo:false }));
-      }
+      if (!job || !job.path) return sendJSON(res, 200, mockResult({ hasVideo:false }));
 
       job.status = 'processing';
       try {
         const py = await runPythonAnalyzer(job.path);
-        const tempo = py.tempo || makeMockAnalyze({ hasVideo:true }).tempo;
-        const pose  = py.pose  || { angles: { spineToVertical_deg: null, leadArmToGround_deg: null }, confidence: 0.0 };
         const result = {
           ok: true,
           received: { jobId, hasVideo: true },
           keyframes: ["address","club-parallel","top","impact","follow-through"],
-          tempo,
-          pose,
+          tempo: py.tempo || mockResult({hasVideo:true}).tempo,
+          pose:  py.pose  || mockResult({hasVideo:true}).pose,
           ts: Date.now(),
           variant: 'golf1'
         };
-        job.status = 'done';
-        job.result = result;
+        job.status = 'done'; job.result = result;
         return sendJSON(res, 200, result);
       } catch (e) {
         job.status = 'failed';
-        // safe fallback
-        return sendJSON(res, 200, makeMockAnalyze({ hasVideo:true, jobId }));
+        return sendJSON(res, 200, mockResult({ hasVideo:true, jobId }));
       }
     });
     return;
   }
 
-  // static
+  // static files
   const safe = pathname === '/' ? 'index.html' : pathname.slice(1);
   const filePath = path.join(process.cwd(), safe);
   const ext = path.extname(filePath).toLowerCase();

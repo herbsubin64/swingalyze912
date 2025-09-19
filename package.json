@@ -1,8 +1,8 @@
 {
   "name": "swingalyze-coach",
-  "version": "2.9.0",
+  "version": "3.0.0",
   "private": true,
-  "description": "Swingalyze Coach v2.9.0 — Python pose analyzer with safe fallback; same UI/API.",
+  "description": "Swingalyze Coach v3.0 — robust analyzer (impact detection + horizon leveling) with safe fallbacks; same API/UI.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

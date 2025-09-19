@@ -1,2 +1,7 @@
 uploads/
 *.mp4
+*.mov
+*.avi
+*.mkv
+.DS_Store
+node_modules/
