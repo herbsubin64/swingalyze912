@@ -11,8 +11,9 @@
   const clearBtn = document.getElementById('clear');
   const metricsEl = document.getElementById('metrics');
   const tipsEl = document.getElementById('tips');
+  const angleTable = document.getElementById('angleTable');
 
-  const lines = []; // {mode,x1,y1,x2,y2,frame}
+  const lines = []; // {mode, x1,y1,x2,y2, frame}
   let drawing = null;
 
   async function ping(){
@@ -48,6 +49,72 @@
       ctx.moveTo(ln.x1*sx, ln.y1*sy);
       ctx.lineTo(ln.x2*sx, ln.y2*sy);
       ctx.stroke();
+
+      // angle label near mid-point
+      const midx = (ln.x1+ln.x2)/2 * sx, midy = (ln.y1+ln.y2)/2 * sy;
+      const a = computeAngles();
+      let label = '';
+      if (ln.mode==='spine' && a.spineToVertical_deg!=null) label = `${a.spineToVertical_deg.toFixed(1)}° (to vertical)`;
+      if (ln.mode==='shaft' && a.shaftToGround_deg!=null) label = `${a.shaftToGround_deg.toFixed(1)}° (to ground)`;
+      if (ln.mode==='ground' && a.groundToHorizontal_deg!=null) label = `${a.groundToHorizontal_deg.toFixed(1)}° (to horizontal)`;
+      if (label){
+        ctx.save();
+        ctx.font='12px system-ui';
+        const w = ctx.measureText(label).width + 8;
+        ctx.fillStyle='rgba(0,0,0,0.7)';
+        ctx.fillRect(midx-4, midy-18, w, 18);
+        ctx.fillStyle='#fff';
+        ctx.fillText(label, midx, midy-5);
+        ctx.restore();
+      }
+    }
+  }
+
+  function lineAngleDeg(x1,y1,x2,y2){
+    const dx = x2 - x1, dy = y2 - y1;
+    const rad = Math.atan2(dy, dx); // vs horizontal
+    return (rad * 180 / Math.PI);
+  }
+  function normalizeDeg(d){
+    let a = Math.abs(d) % 180;
+    if (a < 0) a += 180;
+    return a;
+  }
+
+  function computeAngles(){
+    const spine = [...lines].reverse().find(l => l.mode==='spine');
+    const shaft = [...lines].reverse().find(l => l.mode==='shaft');
+    const ground = [...lines].reverse().find(l => l.mode==='ground');
+
+    let groundAngle = null, spineAngle = null, shaftAngle = null;
+    if (ground) groundAngle = lineAngleDeg(ground.x1,ground.y1,ground.x2,ground.y2);
+    if (spine) spineAngle = lineAngleDeg(spine.x1,spine.y1,spine.x2,spine.y2);
+    if (shaft) shaftAngle = lineAngleDeg(shaft.x1,shaft.y1,shaft.x2,shaft.y2);
+
+    const groundToHorizontal_deg = groundAngle!=null ? normalizeDeg(groundAngle) : null;
+    const spineToVertical_deg = spineAngle!=null ? normalizeDeg(90 - normalizeDeg(spineAngle)) : null;
+    let shaftToGround_deg = null;
+    if (shaftAngle!=null){
+      if (groundAngle!=null) shaftToGround_deg = normalizeDeg(shaftAngle - groundAngle);
+      else shaftToGround_deg = normalizeDeg(shaftAngle);
+    }
+    return { groundToHorizontal_deg, spineToVertical_deg, shaftToGround_deg };
+  }
+
+  function renderAngleCards(){
+    const a = computeAngles();
+    angleTable.innerHTML = '';
+    const cards = [
+      { title: 'Spine vs Vertical', val: a.spineToVertical_deg, ideal: '2°–6° at impact' },
+      { title: 'Shaft vs Ground', val: a.shaftToGround_deg, ideal: '≈40°–50°' },
+      { title: 'Ground vs Horizontal', val: a.groundToHorizontal_deg, ideal: '≈0° (camera level)' },
+    ];
+    for(const c of cards){
+      const div = document.createElement('div');
+      div.className = 'card';
+      const v = (c.val!=null) ? `${c.val.toFixed(1)}°` : '—';
+      div.innerHTML = `<h4>${c.title}</h4><div class="val">${v}</div><div class="ideal">${c.ideal}</div>`;
+      angleTable.appendChild(div);
     }
   }
 
@@ -64,13 +131,13 @@
     const x = (e.clientX - rect.left) * ((player.videoWidth||overlay.width)/overlay.clientWidth);
     const y = (e.clientY - rect.top) * ((player.videoHeight||overlay.height)/overlay.clientHeight);
     drawing.x2 = x; drawing.y2 = y;
-    draw();
+    draw(); renderAngleCards();
   });
   overlay.addEventListener('mouseup', ()=>{
-    if(drawing){ lines.push(drawing); drawing=null; draw(); }
+    if(drawing){ lines.push(drawing); drawing=null; draw(); renderAngleCards(); }
   });
-  undoBtn.addEventListener('click', ()=>{ lines.pop(); draw(); });
-  clearBtn.addEventListener('click', ()=>{ lines.splice(0,lines.length); draw(); });
+  undoBtn.addEventListener('click', ()=>{ lines.pop(); draw(); renderAngleCards(); });
+  clearBtn.addEventListener('click', ()=>{ lines.splice(0,lines.length); draw(); renderAngleCards(); });
 
   document.querySelectorAll('[data-step]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
@@ -96,23 +163,26 @@
     const tips = [];
     const t = data.tempo || {};
     const r = Number(t.ratio||0);
-    if (r === 0) {
-      tips.push("Record a swing or step through frames to estimate tempo.");
-    } else if (r >= 2.8 && r <= 3.2) {
-      tips.push("Tempo ~3:1 — solid. Keep the same cadence through impact.");
-    } else if (r < 2.8) {
-      tips.push("Tempo fast (under 3:1). Lengthen the backswing count: 'one-two' up, 'one' down.");
-    } else if (r > 3.2) {
-      tips.push("Tempo slow (over 3:1). Start the downswing a touch sooner after the transition.");
-    }
+    if (r === 0) tips.push("Record a swing or step frames to estimate tempo.");
+    else if (r >= 2.8 && r <= 3.2) tips.push("Tempo ~3:1 — money. Keep the same cadence through transition.");
+    else if (r < 2.8) tips.push("Tempo fast (<3:1). Count 'one-two' up, 'one' down to lengthen backswing.");
+    else if (r > 3.2) tips.push("Tempo slow (>3:1). Start the downswing sooner after the top.");
     if ((t.down||0) < 0.22) tips.push("Downswing very quick — feel a smoother shift before firing the arms.");
     if ((t.back||0) > 1.2) tips.push("Backswing long — shorten to improve strike consistency.");
-    const a = data.angles || {};
-    if (a.spineImpact_deg && a.spineTop_deg){
-      const delta = a.spineImpact_deg - a.spineTop_deg;
-      if (delta >= 0 && delta <= 3) tips.push("Spine tilt increases slightly into impact — good for compression.");
-      else if (delta < 0) tips.push("Losing spine tilt into impact — feel chest down through the ball.");
-      else if (delta > 4) tips.push("Steepening a lot — keep trail side taller through impact.");
+
+    const a = computeAngles(); // from overlays
+    if (a.spineToVertical_deg!=null){
+      if (a.spineToVertical_deg < 2) tips.push("Add a touch more spine tilt at impact for better compression.");
+      else if (a.spineToVertical_deg <= 6) tips.push("Spine tilt looks solid into impact.");
+      else tips.push("A lot of spine tilt — keep trail side taller to avoid chunks.");
+    }
+    if (a.shaftToGround_deg!=null){
+      if (a.shaftToGround_deg < 38) tips.push("Shaft shallow — feel more hinge/lag into impact.");
+      else if (a.shaftToGround_deg <= 52) tips.push("Shaft angle in a playable window.");
+      else tips.push("Shaft steep — soften grip pressure and rotate through to shallow.");
+    }
+    if (a.groundToHorizontal_deg!=null && a.groundToHorizontal_deg > 2){
+      tips.push("Ground line tilted — re-check camera level for accurate readings.");
     }
     return tips;
   }
@@ -128,8 +198,8 @@
   });
 
   exportBtn.addEventListener('click', ()=>{
-    // 5-panel PNG with current frame & overlays + banner
-    const panels = 5, w=320, h=180, bannerH=80;
+    // Consolidated PNG: 5 panels + angles banner
+    const panels = 5, w=320, h=180, bannerH=120;
     const canvas = document.createElement('canvas');
     canvas.width = w*panels; canvas.height = h + bannerH;
     const cx = canvas.getContext('2d');
@@ -153,16 +223,18 @@
       cx.restore();
     }
 
+    const a = computeAngles();
     cx.fillStyle='#fff'; cx.fillRect(0,h,canvas.width,bannerH);
     cx.fillStyle='#111'; cx.font='14px system-ui';
-    cx.fillText('Swingalyze Coach v2.3.0 — Keyframes: address, club-parallel, top, impact, follow-through', 10, h+22);
-    cx.fillText('Notes: Overlay lines are user-drawn; metrics from /api/analyze.', 10, h+42);
     const ts = new Date().toLocaleString();
-    cx.fillText(`Generated: ${ts}`, 10, h+62);
+    cx.fillText(`Angles — Spine vs Vertical: ${a.spineToVertical_deg!=null?a.spineToVertical_deg.toFixed(1)+'°':'—'} | Shaft vs Ground: ${a.shaftToGround_deg!=null?a.shaftToGround_deg.toFixed(1)+'°':'—'} | Ground vs Horizontal: ${a.groundToHorizontal_deg!=null?a.groundToHorizontal_deg.toFixed(1)+'°':'—'}`, 10, h+24);
+    cx.fillText(`Generated: ${ts}`, 10, h+46);
+    cx.fillText(`Notes: Overlay lines are user-drawn; metrics from /api/analyze`, 10, h+68);
+    cx.fillText(`Build: Swingalyze Coach v2.4.0`, 10, h+90);
 
     const url = canvas.toDataURL('image/png');
-    const a = document.createElement('a'); a.href = url; a.download = 'swingalyze_report.png'; a.click();
+    const aTag = document.createElement('a'); aTag.href = url; aTag.download = 'swingalyze_report.png'; aTag.click();
   });
 
-  ping();
+  ping(); renderAngleCards();
 })();

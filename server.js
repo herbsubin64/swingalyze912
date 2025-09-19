@@ -1,14 +1,9 @@
 /**
- * Swingalyze Coach v2.3.0 (2025-09-19)
- * Full rewrite, plug-and-play (no subfolders). API-compatible with your current shape.
- *
+ * Swingalyze Coach v2.4.0 (2025-09-19)
+ * Full rewrite; API-compatible with v2.3.0. Adds UI features only.
  * Endpoints:
- *   GET  /api/status              -> { ok, ts, service }
- *   POST /api/analyze?g=golf1     -> JSON with keyframes, tempo, overlays (mock if no analyzer)
- *
- * Notes:
- * - Deterministic mock for /api/analyze so UI is testable anywhere.
- * - When you wire in the real analyzer, keep field names stable.
+ *   GET  /api/status
+ *   POST /api/analyze?g=golf1
  */
 const http = require('http');
 const fs = require('fs');
@@ -30,7 +25,6 @@ function serveFile(res, filePath, contentType='text/html') {
 }
 
 function makeMockAnalyze(variant='golf1') {
-  // Mirrors your observed shape; adds angles/stance for better tips.
   return {
     ok: true,
     received: { frames: 0, hasVideo: false },
@@ -60,7 +54,6 @@ const server = http.createServer((req, res) => {
   if (req.method === 'GET' && pathname === '/api/status') {
     return sendJSON(res, 200, { ok: true, ts: Date.now(), service: SERVICE });
   }
-
   if (req.method === 'POST' && pathname === '/api/analyze') {
     let body = '';
     req.on('data', c => body += c);
@@ -72,7 +65,8 @@ const server = http.createServer((req, res) => {
   }
 
   // static
-  let filePath = path.join(process.cwd(), pathname === '/' ? 'index.html' : pathname.slice(1));
+  const safe = pathname === '/' ? 'index.html' : pathname.slice(1);
+  const filePath = path.join(process.cwd(), safe);
   const ext = path.extname(filePath).toLowerCase();
   const contentType = MIME[ext] || 'text/plain; charset=utf-8';
   if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
