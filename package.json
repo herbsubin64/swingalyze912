@@ -1,6 +1,6 @@
 {
   "name": "swingalyze-coach",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "private": true,
   "description": "Swingalyze Coach v3.0 — robust analyzer (impact detection + horizon leveling) with safe fallbacks; same API/UI.",
   "main": "server.js",
@@ -8,5 +8,7 @@
     "start": "node server.js",
     "dev": "PORT=3001 node server.js"
   },
-  "engines": { "node": ">=18" }
+  "engines": {
+    "node": ">=18"
+  }
 }
