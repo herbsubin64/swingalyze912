@@ -3,12 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Swingalyze Coach v3.0.0</title>
+  <title>Swingalyze Coach v3.1.0</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <header>
-    <h1>Swingalyze Coach v3.0.0</h1>
+    <h1>Swingalyze Coach v3.1.0</h1>
     <div id="status">Status: …</div>
   </header>
 
@@ -21,6 +21,8 @@
       <button id="analyze" class="btn">Analyze</button>
       <button id="exportPng" class="btn">Export PNG Report</button>
       <button id="exportJson" class="btn">Export JSON Report</button>
+      <button id="exportPdf" class="btn accent">Export PDF</button>
+      <label class="inline"><input id="s3toggle" type="checkbox"> Upload to S3</label>
     </section>
 
     <section class="slots">
@@ -75,9 +77,9 @@
   </main>
 
   <footer>
-    <small>API: <code>/api/status</code> • <code>/api/upload</code> • <code>/api/analyze</code> • <code>/api/job/:id/status</code></small>
+    <small>API: <code>/api/status</code> • <code>/api/upload</code> • <code>/api/analyze</code> • <code>/api/export/pdf</code> • <code>/api/job/:id/status</code></small>
   </footer>
 
-  <script src="script.js"></script>
+  <script src="script.js?v=310"></script>
 </body>
 </html>

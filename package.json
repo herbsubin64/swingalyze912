@@ -1,14 +1,17 @@
 {
   "name": "swingalyze-coach",
-  "version": "3.0.1",
+  "version": "3.1.0",
   "private": true,
-  "description": "Swingalyze Coach v3.0 — robust analyzer (impact detection + horizon leveling) with safe fallbacks; same API/UI.",
+  "description": "Swingalyze Coach v3.1 — robust analyzer + PDF export + optional S3 share",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "PORT=3001 node server.js"
   },
-  "engines": {
-    "node": ">=18"
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.708.0",
+    "@aws-sdk/s3-request-presigner": "^3.708.0",
+    "pdfkit": "^0.15.0"
   }
 }
