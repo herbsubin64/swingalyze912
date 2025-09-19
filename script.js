@@ -21,7 +21,8 @@
   // Per-slot state
   const state = Object.fromEntries(slots.map(s => [s, { lines: [], frameSec: null, thumb: null, angles: null }]));
   let currentSlot = 'address';
-  let lastAnalyze = null; // store analyzer JSON for report provenance
+  let lastAnalyze = null;
+  let currentJobId = null;
 
   function selectSlot(s){
     currentSlot = s;
@@ -63,23 +64,6 @@
       ctx.moveTo(ln.x1*sx, ln.y1*sy);
       ctx.lineTo(ln.x2*sx, ln.y2*sy);
       ctx.stroke();
-
-      const midx = (ln.x1+ln.x2)/2 * sx, midy = (ln.y1+ln.y2)/2 * sy;
-      const a = computeAngles(lines);
-      let label = '';
-      if (ln.mode==='spine' && a.spineToVertical_deg!=null) label = `${a.spineToVertical_deg.toFixed(1)}° (to vertical)`;
-      if (ln.mode==='shaft' && a.shaftToGround_deg!=null) label = `${a.shaftToGround_deg.toFixed(1)}° (to ground)`;
-      if (ln.mode==='ground' && a.groundToHorizontal_deg!=null) label = `${a.groundToHorizontal_deg.toFixed(1)}° (to horizontal)`;
-      if (label){
-        ctx.save();
-        ctx.font='12px system-ui';
-        const w = ctx.measureText(label).width + 8;
-        ctx.fillStyle='rgba(0,0,0,0.7)';
-        ctx.fillRect(midx-4, midy-18, w, 18);
-        ctx.fillStyle='#fff';
-        ctx.fillText(label, midx, midy-5);
-        ctx.restore();
-      }
     }
   }
 
@@ -112,7 +96,8 @@
 
   function renderAngleCards(){
     const a = computeAngles(state[currentSlot].lines);
-    state[currentSlot].angles = a; // persist per-slot angles
+    state[currentSlot].angles = a;
+    const angleTable = document.getElementById('angleTable');
     angleTable.innerHTML = '';
     const cards = [
       { title: 'Spine vs Vertical', val: a.spineToVertical_deg, ideal: '2°–6° at impact' },
@@ -175,18 +160,22 @@
     });
   });
 
-  // Video load
-  videoInput.addEventListener('change', (e)=>{
+  // Upload video (raw bytes -> /api/upload)
+  videoInput.addEventListener('change', async (e)=>{
     const file = e.target.files[0];
     if(!file) return;
     const url = URL.createObjectURL(file);
-    player.src = url;
-    player.play();
+    player.src = url; player.play();
+    // upload raw bytes (no multipart)
+    const r = await fetch('/api/upload', { method:'POST', headers:{ 'Content-Type': file.type || 'application/octet-stream' }, body: file });
+    const j = await r.json();
+    if (j.ok) currentJobId = j.jobId;
   });
 
-  // Analyze -> tips + store metrics for report provenance
+  // Analyze -> tips + store metrics
   analyzeBtn.addEventListener('click', async ()=>{
-    const r = await fetch('/api/analyze?g=golf1', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
+    const body = currentJobId ? { jobId: currentJobId } : {};
+    const r = await fetch('/api/analyze', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
     const j = await r.json();
     lastAnalyze = j;
     metricsEl.textContent = JSON.stringify(j, null, 2);
@@ -224,7 +213,7 @@
     return tips;
   }
 
-  // Export PNG: 5 panels (one per slot)
+  // Export PNG
   exportPngBtn.addEventListener('click', ()=>{
     const names = slots; const w=320, h=180, bannerH=120;
     const canvas = document.createElement('canvas');
@@ -262,31 +251,31 @@
       }
     });
 
-    // banner with per-slot angles summary
     cx.fillStyle='#fff'; cx.fillRect(0, h, canvas.width, bannerH);
     cx.fillStyle='#111'; cx.font='14px system-ui';
     const ts = new Date().toLocaleString();
-    cx.fillText('Swingalyze Coach v2.6.0 — 5-keyframe report', 10, h+24);
+    cx.fillText('Swingalyze Coach v2.7.0 — 5-keyframe report', 10, h+24);
     cx.fillText(`Generated: ${ts}`, 10, h+46);
-    cx.fillText('Notes: Frames captured via "Set Frame"; overlays are per-slot.', 10, h+68);
+    cx.fillText('Notes: Frames via "Set Frame"; overlays are per-slot.', 10, h+68);
 
     setTimeout(()=>{ const url = canvas.toDataURL('image/png'); const a = document.createElement('a'); a.href = url; a.download = 'swingalyze_report.png'; a.click(); }, 100);
   });
 
-  // Export JSON: slots + overlays + measured angles + analyzer metrics
+  // Export JSON
   exportJsonBtn.addEventListener('click', ()=>{
     const payload = {
-      build: 'Swingalyze Coach v2.6.0',
+      build: 'Swingalyze Coach v2.7.0',
       generated_at: new Date().toISOString(),
       analyzer: lastAnalyze || null,
+      upload_job_id: currentJobId || null,
       slots: {}
     };
     for (const s of slots){
       payload.slots[s] = {
         frame_sec: state[s].frameSec,
-        thumbnail_png: state[s].thumb,           // data URL
-        overlays: state[s].lines,                // raw line coords (video-space)
-        measured_angles: state[s].angles         // computed angles
+        thumbnail_png: state[s].thumb,
+        overlays: state[s].lines,
+        measured_angles: state[s].angles
       };
     }
     const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
