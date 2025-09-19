@@ -1,8 +1,0 @@
-{
-  "keyframes": { "frames": [ { "label": "top", "t": 0.65 }, { "label": "impact", "t": 0.90 } ] },
-  "series": {},
-  "angles": { "spine_impact_deg": 10.0, "shaft_impact_deg": 40.0 },
-  "stance": { "impact_fraction": 0.48 },
-  "tempo": { "ratio": 2.8, "backswing": 0.60, "downswing": 0.30 },
-  "coaching": ["Partial swing: pre-address missing; still robust."]
-}

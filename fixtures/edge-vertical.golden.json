@@ -1,8 +1,0 @@
-{
-  "keyframes": { "impact": 1.05, "frames": [ { "label": "address", "t": 0.10 }, { "label": "top", "t": 0.80 }, { "label": "impact", "t": 1.05 } ] },
-  "series": {},
-  "angles": { "spine_impact_deg": 15.0, "shaft_impact_deg": 42.0 },
-  "stance": { "impact_fraction": 0.52 },
-  "tempo": { "ratio": 3.1, "backswing": 0.80, "downswing": 0.26 },
-  "coaching": ["Vertical video: aspect-ratio safe overlays."]
-}
