@@ -1,4 +1,5 @@
 (function(){
+  const slots = ['address','club-parallel','top','impact','follow-through'];
   const statusEl = document.getElementById('status');
   const player = document.getElementById('player');
   const overlay = document.getElementById('overlay');
@@ -9,12 +10,22 @@
   const drawMode = document.getElementById('drawMode');
   const undoBtn = document.getElementById('undo');
   const clearBtn = document.getElementById('clear');
+  const angleTable = document.getElementById('angleTable');
   const metricsEl = document.getElementById('metrics');
   const tipsEl = document.getElementById('tips');
-  const angleTable = document.getElementById('angleTable');
+  const setFrameBtn = document.getElementById('setFrame');
+  const clearSlotBtn = document.getElementById('clearSlot');
+  const slotButtons = Array.from(document.querySelectorAll('.slot'));
 
-  const lines = []; // {mode, x1,y1,x2,y2, frame}
-  let drawing = null;
+  // Per-slot state
+  const state = Object.fromEntries(slots.map(s => [s, { lines: [], frameSec: null, thumb: null }]));
+  let currentSlot = 'address';
+
+  function selectSlot(s){
+    currentSlot = s;
+    slotButtons.forEach(b => b.classList.toggle('active', b.dataset.slot===s));
+    draw(); renderAngleCards();
+  }
 
   async function ping(){
     try{
@@ -37,6 +48,7 @@
 
   function draw(){
     ctx.clearRect(0,0,overlay.width,overlay.height);
+    const lines = state[currentSlot].lines;
     const sx = overlay.width / (player.videoWidth || overlay.width);
     const sy = overlay.height / (player.videoHeight || overlay.height);
     for(const ln of lines){
@@ -50,9 +62,8 @@
       ctx.lineTo(ln.x2*sx, ln.y2*sy);
       ctx.stroke();
 
-      // angle label near mid-point
       const midx = (ln.x1+ln.x2)/2 * sx, midy = (ln.y1+ln.y2)/2 * sy;
-      const a = computeAngles();
+      const a = computeAngles(lines);
       let label = '';
       if (ln.mode==='spine' && a.spineToVertical_deg!=null) label = `${a.spineToVertical_deg.toFixed(1)}° (to vertical)`;
       if (ln.mode==='shaft' && a.shaftToGround_deg!=null) label = `${a.shaftToGround_deg.toFixed(1)}° (to ground)`;
@@ -72,16 +83,12 @@
 
   function lineAngleDeg(x1,y1,x2,y2){
     const dx = x2 - x1, dy = y2 - y1;
-    const rad = Math.atan2(dy, dx); // vs horizontal
+    const rad = Math.atan2(dy, dx);
     return (rad * 180 / Math.PI);
   }
-  function normalizeDeg(d){
-    let a = Math.abs(d) % 180;
-    if (a < 0) a += 180;
-    return a;
-  }
+  function normalizeDeg(d){ let a = Math.abs(d) % 180; if (a < 0) a += 180; return a; }
 
-  function computeAngles(){
+  function computeAngles(lines){
     const spine = [...lines].reverse().find(l => l.mode==='spine');
     const shaft = [...lines].reverse().find(l => l.mode==='shaft');
     const ground = [...lines].reverse().find(l => l.mode==='ground');
@@ -102,7 +109,7 @@
   }
 
   function renderAngleCards(){
-    const a = computeAngles();
+    const a = computeAngles(state[currentSlot].lines);
     angleTable.innerHTML = '';
     const cards = [
       { title: 'Spine vs Vertical', val: a.spineToVertical_deg, ideal: '2°–6° at impact' },
@@ -118,6 +125,8 @@
     }
   }
 
+  // Drawing
+  let drawing = null;
   overlay.addEventListener('mousedown', (e)=>{
     if (drawMode.value==='none') return;
     const rect = overlay.getBoundingClientRect();
@@ -134,11 +143,28 @@
     draw(); renderAngleCards();
   });
   overlay.addEventListener('mouseup', ()=>{
-    if(drawing){ lines.push(drawing); drawing=null; draw(); renderAngleCards(); }
+    if(drawing){ state[currentSlot].lines.push(drawing); drawing=null; draw(); renderAngleCards(); }
   });
-  undoBtn.addEventListener('click', ()=>{ lines.pop(); draw(); renderAngleCards(); });
-  clearBtn.addEventListener('click', ()=>{ lines.splice(0,lines.length); draw(); renderAngleCards(); });
+  undoBtn.addEventListener('click', ()=>{ state[currentSlot].lines.pop(); draw(); renderAngleCards(); });
+  clearBtn.addEventListener('click', ()=>{ for (const s of slots) state[s].lines = []; draw(); renderAngleCards(); });
+  clearSlotBtn.addEventListener('click', ()=>{ state[currentSlot].lines = []; state[currentSlot].thumb = null; draw(); renderAngleCards(); });
 
+  // Slot controls
+  slotButtons.forEach(btn => btn.addEventListener('click', ()=> selectSlot(btn.dataset.slot)));
+  selectSlot('address');
+
+  // Capture frame thumbnail for current slot
+  setFrameBtn.addEventListener('click', ()=>{
+    const w=320, h=180;
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const cx = c.getContext('2d');
+    try { cx.drawImage(player, 0, 0, w, h); } catch {}
+    state[currentSlot].frameSec = player.currentTime || 0;
+    state[currentSlot].thumb = c.toDataURL('image/png');
+  });
+
+  // Frame stepping
   document.querySelectorAll('[data-step]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       const step = Number(btn.getAttribute('data-step'))||0;
@@ -147,6 +173,7 @@
     });
   });
 
+  // Video load
   videoInput.addEventListener('change', (e)=>{
     const file = e.target.files[0];
     if(!file) return;
@@ -154,14 +181,14 @@
     player.src = url;
     player.play();
   });
-
   window.addEventListener('resize', fitCanvas);
   player.addEventListener('loadedmetadata', fitCanvas);
   player.addEventListener('play', fitCanvas);
 
-  function mapCoachingTips(data){
+  // Analyze -> tips
+  function mapCoachingTips(j){
     const tips = [];
-    const t = data.tempo || {};
+    const t = j.tempo || {};
     const r = Number(t.ratio||0);
     if (r === 0) tips.push("Record a swing or step frames to estimate tempo.");
     else if (r >= 2.8 && r <= 3.2) tips.push("Tempo ~3:1 — money. Keep the same cadence through transition.");
@@ -170,7 +197,8 @@
     if ((t.down||0) < 0.22) tips.push("Downswing very quick — feel a smoother shift before firing the arms.");
     if ((t.back||0) > 1.2) tips.push("Backswing long — shorten to improve strike consistency.");
 
-    const a = computeAngles(); // from overlays
+    // Use angles from the CURRENT slot's drawn overlays for personalized cues
+    const a = computeAngles(state[currentSlot].lines);
     if (a.spineToVertical_deg!=null){
       if (a.spineToVertical_deg < 2) tips.push("Add a touch more spine tilt at impact for better compression.");
       else if (a.spineToVertical_deg <= 6) tips.push("Spine tilt looks solid into impact.");
@@ -187,7 +215,7 @@
     return tips;
   }
 
-  analyzeBtn.addEventListener('click', async ()=>{
+  document.getElementById('analyze').addEventListener('click', async ()=>{
     const r = await fetch('/api/analyze?g=golf1', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
     const j = await r.json();
     metricsEl.textContent = JSON.stringify(j, null, 2);
@@ -197,44 +225,62 @@
     }
   });
 
-  exportBtn.addEventListener('click', ()=>{
-    // Consolidated PNG: 5 panels + angles banner
-    const panels = 5, w=320, h=180, bannerH=120;
+  // Export: 5-panel (one per slot) with each slot's thumbnail and overlays
+  document.getElementById('export').addEventListener('click', ()=>{
+    const names = slots; const w=320, h=180, bannerH=120;
     const canvas = document.createElement('canvas');
-    canvas.width = w*panels; canvas.height = h + bannerH;
+    canvas.width = w*names.length; canvas.height = h + bannerH;
     const cx = canvas.getContext('2d');
 
-    for (let i=0;i<panels;i++){
-      cx.fillStyle='#000'; cx.fillRect(i*w, 0, w, h);
-      try{ cx.drawImage(player, i*w, 0, w, h); }catch{}
-      const sx = w / (player.videoWidth || w);
-      const sy = h / (player.videoHeight || h);
-      cx.save(); cx.translate(i*w, 0); cx.lineWidth=2;
-      for(const ln of lines){
-        if(ln.mode==='spine') cx.strokeStyle='green';
-        else if(ln.mode==='shaft') cx.strokeStyle='blue';
-        else if(ln.mode==='ground') cx.strokeStyle='goldenrod';
-        else continue;
-        cx.beginPath();
-        cx.moveTo(ln.x1*sx, ln.y1*sy);
-        cx.lineTo(ln.x2*sx, ln.y2*sy);
-        cx.stroke();
+    names.forEach((slot, i)=>{
+      cx.fillStyle = '#000'; cx.fillRect(i*w, 0, w, h);
+      // Prefer captured thumbnail; else draw current frame
+      const thumb = state[slot].thumb;
+      if (thumb){
+        const img = new Image();
+        img.onload = () => { cx.drawImage(img, i*w, 0, w, h); drawLines(i); };
+        img.src = thumb;
+      } else {
+        try { cx.drawImage(player, i*w, 0, w, h); } catch {}
+        drawLines(i);
       }
-      cx.restore();
-    }
+      function drawLines(panelIndex){
+        const sx = w / (player.videoWidth || w);
+        const sy = h / (player.videoHeight || h);
+        cx.save(); cx.translate(panelIndex*w, 0); cx.lineWidth=2;
+        for(const ln of state[slot].lines){
+          if(ln.mode==='spine') cx.strokeStyle='green';
+          else if(ln.mode==='shaft') cx.strokeStyle='blue';
+          else if(ln.mode==='ground') cx.strokeStyle='goldenrod';
+          else continue;
+          cx.beginPath();
+          cx.moveTo(ln.x1*sx, ln.y1*sy);
+          cx.lineTo(ln.x2*sx, ln.y2*sy);
+          cx.stroke();
+        }
+        // panel label
+        cx.fillStyle='#fff'; cx.font='13px system-ui';
+        cx.fillText(slot, 8, 16);
+        cx.restore();
+      }
+    });
 
-    const a = computeAngles();
-    cx.fillStyle='#fff'; cx.fillRect(0,h,canvas.width,bannerH);
+    // banner
+    cx.fillStyle='#fff'; cx.fillRect(0, h, canvas.width, bannerH);
     cx.fillStyle='#111'; cx.font='14px system-ui';
     const ts = new Date().toLocaleString();
-    cx.fillText(`Angles — Spine vs Vertical: ${a.spineToVertical_deg!=null?a.spineToVertical_deg.toFixed(1)+'°':'—'} | Shaft vs Ground: ${a.shaftToGround_deg!=null?a.shaftToGround_deg.toFixed(1)+'°':'—'} | Ground vs Horizontal: ${a.groundToHorizontal_deg!=null?a.groundToHorizontal_deg.toFixed(1)+'°':'—'}`, 10, h+24);
+    cx.fillText('Swingalyze Coach v2.5.0 — 5-keyframe report', 10, h+24);
     cx.fillText(`Generated: ${ts}`, 10, h+46);
-    cx.fillText(`Notes: Overlay lines are user-drawn; metrics from /api/analyze`, 10, h+68);
-    cx.fillText(`Build: Swingalyze Coach v2.4.0`, 10, h+90);
+    cx.fillText('Notes: Frames captured via "Set Frame"; overlays are per-slot.', 10, h+68);
 
-    const url = canvas.toDataURL('image/png');
-    const aTag = document.createElement('a'); aTag.href = url; aTag.download = 'swingalyze_report.png'; aTag.click();
+    setTimeout(()=>{ // allow any async image loads to paint
+      const url = canvas.toDataURL('image/png');
+      const a = document.createElement('a'); a.href = url; a.download = 'swingalyze_report.png'; a.click();
+    }, 100);
   });
 
-  ping(); renderAngleCards();
+  // Init
+  ping();
+  window.addEventListener('resize', fitCanvas);
+  player.addEventListener('loadedmetadata', fitCanvas);
 })();

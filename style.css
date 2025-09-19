@@ -4,12 +4,17 @@ h1{margin:0;font-size:18px}
 #status{font-size:14px;color:#555}
 main{padding:16px;display:grid;gap:16px}
 .bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.slots{display:flex;gap:8px;flex-wrap:wrap}
+.slot-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.slot-label{font-size:14px;color:#333}
 .btn{border:1px solid #ddd;background:#fafafa;padding:8px 12px;border-radius:10px;cursor:pointer}
 .btn.ghost{background:#fff}
+.btn.active{border-color:#111}
 .stage{position:relative;max-width:900px}
 video{width:100%;max-height:60vh;background:#000}
 canvas{position:absolute;inset:0;width:100%;height:100%}
 .tools .row{display:flex;gap:8px;flex-wrap:wrap;margin:4px 0}
+.tools .row.hint{color:#666;font-size:13px}
 .panels{display:grid;grid-template-columns:1fr 1fr;gap:12px;max-width:900px}
 .panels .full{grid-column:1/-1}
 pre{background:#f7f7f7;padding:10px;border-radius:8px;overflow:auto}

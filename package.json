@@ -1,8 +1,8 @@
 {
   "name": "swingalyze-coach",
-  "version": "2.4.0",
+  "version": "2.5.0",
   "private": true,
-  "description": "Swingalyze Coach v2.4.0 — angles readouts, richer coaching, PNG report; API compatible.",
+  "description": "Swingalyze Coach v2.5.0 — keyframe slots, per-slot overlays, 5-keyframe PNG report; API compatible.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

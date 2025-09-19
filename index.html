@@ -3,12 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Swingalyze Coach v2.4.0</title>
+  <title>Swingalyze Coach v2.5.0</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <header>
-    <h1>Swingalyze Coach v2.4.0</h1>
+    <h1>Swingalyze Coach v2.5.0</h1>
     <div id="status">Status: …</div>
   </header>
 
@@ -20,6 +20,19 @@
       </label>
       <button id="analyze" class="btn">Analyze</button>
       <button id="export" class="btn">Export PNG Report</button>
+    </section>
+
+    <section class="slots">
+      <div class="slot-row">
+        <span class="slot-label">Keyframes:</span>
+        <button class="slot btn" data-slot="address">Address</button>
+        <button class="slot btn" data-slot="club-parallel">Club-parallel</button>
+        <button class="slot btn" data-slot="top">Top</button>
+        <button class="slot btn" data-slot="impact">Impact</button>
+        <button class="slot btn" data-slot="follow-through">Follow-through</button>
+        <button id="setFrame" class="btn ghost">Set Frame</button>
+        <button id="clearSlot" class="btn ghost">Clear Slot</button>
+      </div>
     </section>
 
     <section class="stage">
@@ -38,13 +51,14 @@
           <option value="ground">Ground / stance (yellow)</option>
         </select>
         <button id="undo" class="btn ghost">Undo</button>
-        <button id="clear" class="btn ghost">Clear</button>
+        <button id="clear" class="btn ghost">Clear All</button>
       </div>
+      <div class="row hint">Tip: pick a keyframe, hit <b>Set Frame</b> to capture a thumbnail, then draw your spine/shaft/ground lines for that slot.</div>
     </section>
 
     <section class="panels">
       <div>
-        <h3>Measured Angles</h3>
+        <h3>Measured Angles (current slot)</h3>
         <div id="angleTable"></div>
       </div>
       <div>
