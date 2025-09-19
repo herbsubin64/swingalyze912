@@ -1,0 +1,6 @@
+{
+  "remote.autoForwardPorts": true,
+  "remote.portsAttributes": {
+    "3001": { "label": "Swingalyze", "onAutoForward": "openBrowser", "protocol": "http", "requireLocalPort": false }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "Swingalyze",
+  "forwardPorts": [3100],
+  "portsAttributes": {
+    "3100": {
+      "label": "Swingalyze",
+      "protocol": "http",
+      "elevateIfNeeded": false
+    }
+  },
+  "remoteUser": "codespace",
+  "postCreateCommand": "",
+  "features": {}
+}
