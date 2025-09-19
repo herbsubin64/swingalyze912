@@ -1,0 +1,12 @@
+{
+  "name": "swingalyze-coach",
+  "version": "2.9.0",
+  "private": true,
+  "description": "Swingalyze Coach v2.9.0 — Python pose analyzer with safe fallback; same UI/API.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "PORT=3001 node server.js"
+  },
+  "engines": { "node": ">=18" }
+}
