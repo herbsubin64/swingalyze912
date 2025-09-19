@@ -21,7 +21,7 @@
   const state = Object.fromEntries(slots.map(s => [s, { lines: [], frameSec: null, thumb: null, angles: null }]));
   let currentSlot = 'address';
   let lastAnalyze = null;
-  let currentJobId = null;
+  window.currentJobId = null;
 
   function selectSlot(s){
     currentSlot = s;
@@ -66,7 +66,7 @@
     }
   }
   function lineAngleDeg(x1,y1,x2,y2){ const dx=x2-x1, dy=y2-y1; return Math.atan2(dy,dx)*180/Math.PI; }
-  function normalizeDeg(d){ let a = Math.abs(d)%180; if(a<0)a+=180; return a; }
+  function normalizeDeg(d){ let a=Math.abs(d)%180; if(a<0)a+=180; return a; }
   function computeAngles(lines){
     const spine=[...lines].reverse().find(l=>l.mode==='spine');
     const shaft=[...lines].reverse().find(l=>l.mode==='shaft');
@@ -75,9 +75,9 @@
     if(ground) ga=lineAngleDeg(ground.x1,ground.y1,ground.x2,ground.y2);
     if(spine)  sa=lineAngleDeg(spine.x1,spine.y1,spine.x2,spine.y2);
     if(shaft)  ha=lineAngleDeg(shaft.x1,shaft.y1,shaft.x2,shaft.y2);
-    const gH = ga!=null? normalizeDeg(ga): null;
-    const sV = sa!=null? normalizeDeg(90 - normalizeDeg(sa)): null;
-    const hG = ha!=null? (ga!=null? normalizeDeg(ha-ga): normalizeDeg(ha)) : null;
+    const gH=ga!=null? normalizeDeg(ga): null;
+    const sV=sa!=null? normalizeDeg(90 - normalizeDeg(sa)): null;
+    const hG=ha!=null? (ga!=null? normalizeDeg(ha-ga): normalizeDeg(ha)) : null;
     return { groundToHorizontal_deg:gH, spineToVertical_deg:sV, shaftToGround_deg:hG };
   }
   function renderAngleCards(){
@@ -100,7 +100,7 @@
   // Drawing handlers
   let drawing=null;
   overlay.addEventListener('mousedown',(e)=>{
-    if(drawMode.value==='none') return;
+    if (drawMode.value==='none') return;
     const rect=overlay.getBoundingClientRect();
     const x=(e.clientX-rect.left)*((player.videoWidth||overlay.width)/overlay.clientWidth);
     const y=(e.clientY-rect.top)*((player.videoHeight||overlay.height)/overlay.clientHeight);
@@ -119,42 +119,43 @@
   clearSlotBtn.addEventListener('click',()=>{ state[currentSlot].lines=[]; state[currentSlot].thumb=null; state[currentSlot].angles=null; draw(); renderAngleCards(); });
 
   // Slots
-  slotButtons.forEach(btn=>btn.addEventListener('click',()=>selectSlot(btn.dataset.slot)));
+  document.querySelectorAll('.slot').forEach(btn => btn.addEventListener('click',()=>selectSlot(btn.dataset.slot)));
   selectSlot('address');
 
-  // Capture frame thumbnail
+  // Set frame thumbnail
   document.getElementById('setFrame').addEventListener('click',()=>{
     const w=320,h=180; const c=document.createElement('canvas'); c.width=w; c.height=h;
-    const cx=c.getContext('2d'); try{ cx.drawImage(player,0,0,w,h); }catch{}
+    const cx=c.getContext('2d'); try{ cx.drawImage(player,0,0,w,h);}catch{}
     state[currentSlot].frameSec=player.currentTime||0; state[currentSlot].thumb=c.toDataURL('image/png');
   });
 
-  // Frame step
+  // Frame step buttons
   document.querySelectorAll('[data-step]').forEach(btn=>{
     btn.addEventListener('click',()=>{ const step=Number(btn.getAttribute('data-step'))||0; const fps=30;
       player.currentTime=Math.max(0, player.currentTime + step*(1/fps)); });
   });
 
-  // Upload video (raw -> /api/upload)
+  // Upload video -> /api/upload
   videoInput.addEventListener('change', async (e)=>{
-    const file = e.target.files[0]; if(!file) return;
-    const url = URL.createObjectURL(file); player.src = url; player.play();
-    const r = await fetch('/api/upload', { method:'POST', headers:{ 'Content-Type': file.type || 'application/octet-stream' }, body: file });
-    const j = await r.json(); if (j.ok) window.currentJobId = j.jobId;
+    const file=e.target.files[0]; if(!file) return;
+    const url=URL.createObjectURL(file); player.src=url; player.play();
+    const r=await fetch('/api/upload',{method:'POST',headers:{'Content-Type':file.type||'application/octet-stream'},body:file});
+    const j=await r.json(); if(j.ok) window.currentJobId=j.jobId;
   });
 
-  // Analyze (tries python worker on server)
+  // Analyze -> calls server (python pose or fallback)
   analyzeBtn.addEventListener('click', async ()=>{
     const body = window.currentJobId ? { jobId: window.currentJobId } : {};
-    const r = await fetch('/api/analyze', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    const r = await fetch('/api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const j = await r.json();
     lastAnalyze = j;
-    metricsEl.textContent = JSON.stringify(j, null, 2);
+    metricsEl.textContent = JSON.stringify(j,null,2);
     tipsEl.innerHTML = '';
-    for(const t of mapCoachingTips(j)){
-      const div=document.createElement('div'); div.className='tip'; div.textContent=t; tipsEl.appendChild(div);
-    }
+    // Use tempo in tips; (optional) we could also use j.pose.angles later
+    const tips = mapCoachingTips(j);
+    for(const t of tips){ const div=document.createElement('div'); div.className='tip'; div.textContent=t; tipsEl.appendChild(div); }
   });
+
   function mapCoachingTips(j){
     const tips=[]; const t=j.tempo||{}; const r=Number(t.ratio||0);
     if (r===0) tips.push("Record a swing or step frames to estimate tempo.");
@@ -163,14 +164,10 @@
     else if (r>3.2) tips.push("Tempo slow (>3:1). Start the downswing sooner after the top.");
     if ((t.down||0)<0.22) tips.push("Downswing very quick — feel a smoother shift before firing the arms.");
     if ((t.back||0)>1.2) tips.push("Backswing long — shorten to improve strike consistency.");
-    const a=computeAngles(state[currentSlot].lines);
-    if (a.spineToVertical_deg!=null){ if(a.spineToVertical_deg<2) tips.push("Add a touch more spine tilt at impact."); else if(a.spineToVertical_deg<=6) tips.push("Spine tilt looks solid into impact."); else tips.push("A lot of spine tilt — keep trail side taller."); }
-    if (a.shaftToGround_deg!=null){ if(a.shaftToGround_deg<38) tips.push("Shaft shallow — feel more hinge/lag."); else if(a.shaftToGround_deg<=52) tips.push("Shaft in a playable window."); else tips.push("Shaft steep — soften grip and rotate through."); }
-    if (a.groundToHorizontal_deg!=null && a.groundToHorizontal_deg>2) tips.push("Ground line tilted — level camera for accuracy.");
     return tips;
   }
 
-  // Export PNG
+  // PNG export
   exportPngBtn.addEventListener('click', ()=>{
     const names=slots; const w=320,h=180,bannerH=120;
     const canvas=document.createElement('canvas'); canvas.width=w*names.length; canvas.height=h+bannerH;
@@ -184,7 +181,10 @@
         const sx=w/(player.videoWidth||w), sy=h/(player.videoHeight||h);
         cx.save(); cx.translate(pi*w,0); cx.lineWidth=2;
         for(const ln of state[slotName].lines){
-          if(ln.mode==='spine') cx.strokeStyle='green'; else if(ln.mode==='shaft') cx.strokeStyle='blue'; else if(ln.mode==='ground') cx.strokeStyle='goldenrod'; else continue;
+          if(ln.mode==='spine') cx.strokeStyle='green';
+          else if(ln.mode==='shaft') cx.strokeStyle='blue';
+          else if(ln.mode==='ground') cx.strokeStyle='goldenrod';
+          else continue;
           cx.beginPath(); cx.moveTo(ln.x1*sx,ln.y1*sy); cx.lineTo(ln.x2*sx,ln.y2*sy); cx.stroke();
         }
         cx.fillStyle='#fff'; cx.font='13px system-ui'; cx.fillText(slotName,8,16); cx.restore();
@@ -193,15 +193,15 @@
     cx.fillStyle='#fff'; cx.fillRect(0,h,canvas.width,bannerH);
     cx.fillStyle='#111'; cx.font='14px system-ui';
     const ts=new Date().toLocaleString();
-    cx.fillText('Swingalyze Coach v2.8.0 — 5-keyframe report',10,h+24);
+    cx.fillText('Swingalyze Coach v2.9.0 — 5-keyframe report',10,h+24);
     cx.fillText(`Generated: ${ts}`,10,h+46);
-    cx.fillText('Notes: Frames via "Set Frame"; overlays per-slot; tempo from analyzer if available.',10,h+68);
+    cx.fillText('Notes: Frames via "Set Frame"; overlays per-slot; tempo/pose from analyzer if available.',10,h+68);
     setTimeout(()=>{ const url=canvas.toDataURL('image/png'); const a=document.createElement('a'); a.href=url; a.download='swingalyze_report.png'; a.click(); },100);
   });
 
-  // Export JSON
+  // JSON export
   exportJsonBtn.addEventListener('click', ()=>{
-    const payload={ build:'Swingalyze Coach v2.8.0', generated_at:new Date().toISOString(), analyzer:lastAnalyze||null, upload_job_id: window.currentJobId||null, slots:{} };
+    const payload={ build:'Swingalyze Coach v2.9.0', generated_at:new Date().toISOString(), analyzer:lastAnalyze||null, upload_job_id: window.currentJobId||null, slots:{} };
     for(const s of slots){ payload.slots[s]={ frame_sec: state[s].frameSec, thumbnail_png: state[s].thumb, overlays: state[s].lines, measured_angles: state[s].angles }; }
     const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
     const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='swingalyze_report.json'; a.click(); URL.revokeObjectURL(url);
