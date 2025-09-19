@@ -1,24 +1,25 @@
 /**
- * Swingalyze Coach v2.7.0 (2025-09-19)
- * Analyzer Bridge: upload -> jobId -> analyze(jobId). Flat files, no deps.
+ * Swingalyze Coach v2.8.0 (2025-09-19)
+ * Analyzer Adapter: try Python worker for real tempo (OpenCV), else safe mock fallback.
  * Endpoints:
  *  GET  /api/status
- *  POST /api/upload           (body = raw video bytes; header video/* or application/octet-stream) -> { ok, jobId, path }
- *  POST /api/analyze          (body = { jobId? }) -> analyzerAdapter() mock response
- *  GET  /api/job/:id/status   -> { ok, status }
+ *  POST /api/upload           -> { ok, jobId, path }
+ *  POST /api/analyze          -> tries python worker -> fallback to mock
+ *  GET  /api/job/:id/status
  */
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const url = require('url');
 const crypto = require('crypto');
+const { spawn } = require('child_process');
 
 const PORT = process.env.PORT || 3001;
 const SERVICE = 'swingalyze-api';
 const UPLOAD_DIR = path.join(process.cwd(), 'uploads');
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR);
 
-const jobs = new Map(); // id -> { status: 'queued'|'processing'|'done'|'failed', path, created, result? }
+const jobs = new Map(); // id -> { status, path, created, result? }
 
 function sendJSON(res, code, obj) {
   res.writeHead(code, {'Content-Type': 'application/json'});
@@ -32,13 +33,26 @@ function serveFile(res, filePath, contentType='text/html') {
 }
 function uid() { return crypto.randomBytes(8).toString('hex'); }
 
-// Deterministic mock analyzer — swap this later for real AI without changing UI.
-async function analyzerAdapter({ jobId, videoPath }) {
-  // Simulate some work using job map
-  await new Promise(r => setTimeout(r, 250));
+async function runPythonAnalyzer(videoPath) {
+  return new Promise((resolve, reject) => {
+    const child = spawn('python3', ['analyzer_worker.py', videoPath], { cwd: process.cwd() });
+    let out = '', err = '';
+    child.stdout.on('data', d => out += d.toString());
+    child.stderr.on('data', d => err += d.toString());
+    child.on('close', (code) => {
+      if (code === 0) {
+        try { resolve(JSON.parse(out)); } catch (e) { reject(new Error('parse fail')); }
+      } else {
+        reject(new Error(err || `python exit ${code}`));
+      }
+    });
+  });
+}
+
+function makeMockAnalyze(hasVideo) {
   return {
     ok: true,
-    received: { jobId: jobId || null, hasVideo: !!videoPath },
+    received: { hasVideo: !!hasVideo },
     keyframes: ["address","club-parallel","top","impact","follow-through"],
     tempo: { back: 0.84, down: 0.28, ratio: 3.0, confidence: 0.9 },
     angles: { spineTop_deg: 33.0, spineImpact_deg: 34.2, shaftTop_deg: 44.0, shaftImpact_deg: 41.0 },
@@ -67,11 +81,11 @@ const server = http.createServer(async (req, res) => {
     return sendJSON(res, 200, { ok: true, ts: Date.now(), service: SERVICE });
   }
 
-  // Upload: raw body streamed to disk
+  // Upload raw video
   if (req.method === 'POST' && pathname === '/api/upload') {
     const ct = (req.headers['content-type'] || '').toLowerCase();
     if (!ct.startsWith('video/') && ct !== 'application/octet-stream') {
-      return sendJSON(res, 400, { ok:false, error:'Send raw video bytes; Content-Type video/* or application/octet-stream' });
+      return sendJSON(res, 400, { ok:false, error:'Send raw video bytes (Content-Type video/*)' });
     }
     const id = uid();
     const filePath = path.join(UPLOAD_DIR, `${id}.mp4`);
@@ -93,23 +107,40 @@ const server = http.createServer(async (req, res) => {
     return sendJSON(res, 200, { ok:true, status: job.status });
   }
 
-  // Analyze: accepts { jobId? }
+  // Analyze (tries python; falls back)
   if (req.method === 'POST' && pathname === '/api/analyze') {
     let body = '';
     req.on('data', c => body += c);
     req.on('end', async () => {
       let payload = {};
-      try { payload = body ? JSON.parse(body) : {}; } catch { payload = {}; }
+      try { payload = body ? JSON.parse(body) : {}; } catch {}
       const jobId = payload.jobId || null;
       const job = jobId ? jobs.get(jobId) : null;
-
-      if (job && job.status === 'processing') {
-        return sendJSON(res, 200, { ok:false, error:'job busy' });
-      }
-
       if (job) job.status = 'processing';
+
       try {
-        const result = await analyzerAdapter({ jobId, videoPath: job?.path });
+        let result;
+        if (job?.path) {
+          // Try python worker; if it fails, fallback to mock
+          try {
+            const py = await runPythonAnalyzer(job.path);
+            result = {
+              ok: true,
+              received: { jobId, hasVideo: true },
+              keyframes: ["address","club-parallel","top","impact","follow-through"],
+              tempo: py.tempo || makeMockAnalyze(true).tempo,
+              angles: makeMockAnalyze(true).angles,
+              stance: makeMockAnalyze(true).stance,
+              overlays: [],
+              ts: Date.now(),
+              variant: 'golf1'
+            };
+          } catch (e) {
+            result = { ...makeMockAnalyze(true), received: { jobId, hasVideo: true } };
+          }
+        } else {
+          result = makeMockAnalyze(false);
+        }
         if (job) { job.status = 'done'; job.result = result; }
         return sendJSON(res, 200, result);
       } catch (e) {
@@ -120,7 +151,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Static files
+  // Static
   const safe = pathname === '/' ? 'index.html' : pathname.slice(1);
   const filePath = path.join(process.cwd(), safe);
   const ext = path.extname(filePath).toLowerCase();

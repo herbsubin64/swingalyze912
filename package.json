@@ -1,8 +1,8 @@
 {
   "name": "swingalyze-coach",
-  "version": "2.7.0",
+  "version": "2.8.0",
   "private": true,
-  "description": "Swingalyze Coach v2.7.0 — Analyzer Bridge (upload/job/analyze); UI unchanged otherwise.",
+  "description": "Swingalyze Coach v2.8.0 — Python analyzer adapter (real tempo) + fallback; same UI.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
