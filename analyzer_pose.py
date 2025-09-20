@@ -1,195 +1,212 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-Swingalyze Pose Analyzer v3.0.1
-- Tempo via motion differencing.
-- Improved impact detection.
-- Horizon estimation via Hough OR explicit --horizon=<deg> override from UI.
+Swingalyze Analyzer v3.2.0 (full rewrite)
+- MediaPipe-based pose extraction
+- Horizon correction for both angles (camera tilt)
+- Tempo estimation from lead wrist motion
+- Clean JSON output the server/UI expect
+
+CLI:
+  python3 analyzer_pose.py <video_path> [--horizon=FLOAT] [--fps=30] [--max-frames=3000]
+
+Output JSON:
+{
+  "tempo": {"back": float, "down": float, "ratio": float, "confidence": float},
+  "pose": {"angles": {"spineToVertical_deg": float, "leadArmToGround_deg": float}, "confidence": float}
+}
 """
-import sys, json, math
 
-def emit(obj): print(json.dumps(obj)); sys.exit(0)
-def fallback():
-    emit({"tempo":{"back":0.84,"down":0.28,"ratio":3.0,"confidence":0.30},
-          "pose":{"angles":{"spineToVertical_deg":None,"leadArmToGround_deg":None},"confidence":0.0}})
+import os, sys, json, math, argparse
+import numpy as np
 
-def angle_deg(p1, p2):
-    dx, dy = p2[0]-p1[0], p2[1]-p1[1]
-    return math.degrees(math.atan2(dy, dx))
+def _clamp(x, lo, hi): return max(lo, min(hi, x))
 
-def normalize_deg(d): return abs(d) % 180.0
-def clamp(v, lo, hi): return max(lo, min(hi, v))
+# ---- safe imports with friendly errors ----
+try:
+    import cv2
+except Exception as e:
+    print(json.dumps({
+        "tempo":{"back":0.0,"down":0.0,"ratio":0.0,"confidence":0.0},
+        "pose":{"angles":{"spineToVertical_deg":None,"leadArmToGround_deg":None},"confidence":0.0},
+        "error": f"OpenCV import failed: {e}. Try: sudo apt-get install -y libgl1 libglib2.0-0 && pip install opencv-python-headless"
+    }), flush=True); sys.exit(0)
 
-def parse_args():
-    path=None; horizon=None
-    for a in sys.argv[1:]:
-        if a.startswith('--horizon='):
-            try: horizon = float(a.split('=',1)[1])
-            except: pass
-        elif not a.startswith('-') and path is None:
-            path = a
-    return path, horizon
+try:
+    import mediapipe as mp
+except Exception as e:
+    print(json.dumps({
+        "tempo":{"back":0.0,"down":0.0,"ratio":0.0,"confidence":0.0},
+        "pose":{"angles":{"spineToVertical_deg":None,"leadArmToGround_deg":None},"confidence":0.0},
+        "error": f"Mediapipe import failed: {e}. Try: pip install 'mediapipe>=0.10.11,<0.11'"
+    }), flush=True); sys.exit(0)
+
+# ---- helpers ----
+def angle_deg_between(v1, v2):
+    a = np.array(v1, float); b = np.array(v2, float)
+    na, nb = np.linalg.norm(a), np.linalg.norm(b)
+    if na == 0 or nb == 0: return None
+    c = float(np.dot(a,b)/(na*nb)); c = _clamp(c,-1.0,1.0)
+    return math.degrees(math.acos(c))
+
+def moving_average(x, k):
+    if k <= 1: return np.asarray(x, float)
+    x = np.asarray(x, float); k = int(k); 
+    if k % 2 == 0: k += 1
+    pad = k//2; xx = np.pad(x, (pad,pad), mode='edge')
+    ker = np.ones(k)/k
+    return np.convolve(xx, ker, mode='valid')
+
+def estimate_tempo_from_wrist(ts, y_series):
+    y = np.asarray(y_series, float); t = np.asarray(ts, float)
+    if len(y) < 15 or len(t)!=len(y): return (0.0,0.0,0.0,0.0)
+    ys = moving_average(y, k=max(3, len(y)//50))
+    vy = np.gradient(ys, t)
+    i_top = int(np.argmin(ys))
+    i_imp = i_top
+    if i_top < len(vy)-1: i_imp = int(np.argmax(vy[i_top+1:])) + i_top + 1
+    t_back = max(0.0, float(t[i_top]-t[0]))
+    t_down = max(0.0, float(t[i_imp]-t[i_top]))
+    ratio = (t_back/t_down) if t_down>1e-3 else 0.0
+    peak = float(np.max(vy)) if vy.size else 0.0
+    spread = float(np.std(vy))
+    conf = 0.0
+    if peak>0 and spread>0: conf = _clamp((peak/(spread*6.0)), 0.0, 1.0)
+    if 0.4<=t_back<=6.5 and 0.15<=t_down<=3.5: conf = _clamp(conf+0.15,0.0,1.0)
+    return (round(t_back,3), round(t_down,3), round(ratio,3), round(conf,2))
+
+def compute_pose_angles(landmarks, img_w, img_h, horizon_deg=None, right_handed=True):
+    mp_pose = mp.solutions.pose.PoseLandmark
+    ls = landmarks[mp_pose.LEFT_SHOULDER.value]
+    rs = landmarks[mp_pose.RIGHT_SHOULDER.value]
+    lh = landmarks[mp_pose.LEFT_HIP.value]
+    rh = landmarks[mp_pose.RIGHT_HIP.value]
+    lead_sh = landmarks[mp_pose.LEFT_SHOULDER.value] if right_handed else landmarks[mp_pose.RIGHT_SHOULDER.value]
+    lead_wr = landmarks[mp_pose.LEFT_WRIST.value]    if right_handed else landmarks[mp_pose.RIGHT_WRIST.value]
+    need = [ls,rs,lh,rh,lead_sh,lead_wr]
+    if any(l is None for l in need): return (None,None,0.0)
+
+    vis = [getattr(l,"visibility",0.0) for l in need]
+    vis_conf = float(np.mean([v for v in vis if v is not None])) if vis else 0.0
+
+    def px(lm): return np.array([lm.x*img_w, lm.y*img_h], float)
+    LS,RS,LH,RH,LSH,LWR = map(px, need)
+
+    mid_sh = (LS+RS)/2.0; mid_hp = (LH+RH)/2.0
+    spine_vec = mid_sh - mid_hp
+    vertical = np.array([0.0,-1.0], float)
+    spine_raw = angle_deg_between(spine_vec, vertical)
+
+    arm_vec = LWR - LSH
+    horizontal = np.array([1.0,0.0], float)
+    arm_raw = angle_deg_between(arm_vec, horizontal)
+    if spine_raw is None or arm_raw is None:
+        return (None,None,_clamp(vis_conf,0.0,0.95))
+
+    if horizon_deg is not None:
+        H = float(horizon_deg)
+        spine = abs(spine_raw - H)
+        arm   = abs(arm_raw - H)
+    else:
+        spine = float(spine_raw); arm = float(arm_raw)
+
+    spine = _clamp(spine,0.0,90.0); arm = _clamp(arm,0.0,180.0)
+
+    spine_len = float(np.linalg.norm(spine_vec))
+    arm_len   = float(np.linalg.norm(arm_vec))
+    diag = float(np.linalg.norm([img_w,img_h]))
+    lconf = 0.0
+    if diag>0: lconf = _clamp(0.5*((spine_len/diag)+(arm_len/diag))*4.0,0.0,1.0)
+    pose_conf = _clamp(0.6*vis_conf + 0.4*lconf, 0.0, 1.0)
+    return (round(spine,1), round(arm,1), round(pose_conf,2))
+
+def analyze_video(path, horizon=None, fps_hint=30, max_frames=3000):
+    cap = cv2.VideoCapture(path)
+    if not cap.isOpened():
+        return {"tempo":{"back":0.0,"down":0.0,"ratio":0.0,"confidence":0.0},
+                "pose":{"angles":{"spineToVertical_deg":None,"leadArmToGround_deg":None},"confidence":0.0}}
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    if not fps or fps<=0 or fps>240: fps = float(fps_hint)
+    dt = 1.0/max(fps,1e-6)
+
+    mp_pose = mp.solutions.pose
+    pose = mp_pose.Pose(static_image_mode=False, model_complexity=1,
+                        enable_segmentation=False, min_detection_confidence=0.5,
+                        min_tracking_confidence=0.5, smooth_landmarks=True)
+
+    ts, wrist_y, spine_list, arm_list, conf_list = [], [], [], [], []
+    frame_idx = 0
+    try:
+        while frame_idx < max_frames:
+            ok, frame = cap.read()
+            if not ok: break
+            frame_idx += 1
+            h,w = frame.shape[:2]
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            res = pose.process(rgb)
+            if res.pose_landmarks:
+                lms = res.pose_landmarks.landmark
+                s,a,pconf = compute_pose_angles(lms, w,h, horizon_deg=horizon, right_handed=True)
+                spine_list.append(s); arm_list.append(a); conf_list.append(pconf)
+                lw = lms[mp_pose.PoseLandmark.LEFT_WRIST.value]
+                wy = lw.y*h if lw is not None else np.nan
+                wrist_y.append(wy); ts.append(frame_idx*dt)
+            else:
+                wrist_y.append(np.nan); ts.append(frame_idx*dt)
+                spine_list.append(None); arm_list.append(None); conf_list.append(0.0)
+    finally:
+        cap.release(); pose.close()
+
+    ts = np.asarray(ts,float); wy = np.asarray(wrist_y,float)
+    if np.all(np.isnan(wy)):
+        t_back=t_down=ratio=t_conf=0.0
+    else:
+        nans = np.isnan(wy)
+        if np.any(nans):
+            good = ~nans
+            wy[nans] = np.interp(np.flatnonzero(nans), np.flatnonzero(good), wy[good])
+        t_back,t_down,ratio,t_conf = estimate_tempo_from_wrist(ts, wy)
+
+    s_valid = np.array([v for v in spine_list if isinstance(v,(int,float))], float)
+    a_valid = np.array([v for v in arm_list if isinstance(v,(int,float))], float)
+    c_valid = np.array([v for v in conf_list if isinstance(v,(int,float))], float)
+
+    if s_valid.size==0 or a_valid.size==0:
+        pose_angles = {"spineToVertical_deg":None,"leadArmToGround_deg":None}
+        pose_conf = 0.0
+    else:
+        spine_med = float(np.median(s_valid))
+        arm_med   = float(np.median(a_valid))
+        pose_conf = float(np.median(c_valid)) if c_valid.size else 0.0
+        pose_angles = {"spineToVertical_deg":round(spine_med,1),
+                       "leadArmToGround_deg":round(arm_med,1)}
+        pose_conf = round(_clamp(pose_conf,0.0,1.0),2)
+
+    return {"tempo":{"back":t_back,"down":t_down,"ratio":ratio,"confidence":t_conf},
+            "pose":{"angles":pose_angles,"confidence":pose_conf}}
 
 def main():
-    path, horizon_override = parse_args()
-    if not path: fallback()
+    ap = argparse.ArgumentParser(description="Swingalyze analyzer (pose + tempo)")
+    ap.add_argument("video", help="Path to input video (mp4/mov/etc.)")
+    ap.add_argument("--horizon", type=float, default=None, help="Camera tilt in degrees; subtract from angles")
+    ap.add_argument("--fps", type=float, default=30.0, help="Fallback FPS if not discoverable")
+    ap.add_argument("--max-frames", type=int, default=3000, help="Max frames to process")
+    args = ap.parse_args()
+
+    if not os.path.isfile(args.video):
+        print(json.dumps({
+            "tempo":{"back":0.0,"down":0.0,"ratio":0.0,"confidence":0.0},
+            "pose":{"angles":{"spineToVertical_deg":None,"leadArmToGround_deg":None},"confidence":0.0},
+            "error": f"File not found: {args.video}"
+        }), flush=True); sys.exit(0)
+
     try:
-        import cv2, numpy as np
-    except Exception:
-        fallback()
-
-    cap = cv2.VideoCapture(path)
-    if not cap.isOpened(): fallback()
-    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    step = max(1, int(fps // 10))
-
-    prev=None; motion=[]; sampled_frames=[]
-    idx=0
-    while True:
-        ret, frame = cap.read()
-        if not ret: break
-        if idx % step == 0:
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            gray = cv2.GaussianBlur(gray,(5,5),0)
-            sampled_frames.append(frame.copy())
-            if prev is None: prev = gray
-            else:
-                diff = cv2.absdiff(gray, prev)
-                motion.append(float(np.mean(diff)))
-                prev = gray
-        idx+=1
-    cap.release()
-    if len(motion) < 6: fallback()
-
-    arr = np.array(motion, dtype=float)
-    k=3; ker=np.ones(k)/k; smooth=np.convolve(arr, ker, mode='same')
-
-    imp0 = int(np.argmax(smooth))
-    if imp0 < len(smooth)//3:
-        imp0 = int(np.argmax(smooth[int(len(smooth)*0.4):]) + int(len(smooth)*0.4))
-    top0 = max(0, int(np.argmin(smooth[:imp0]))) if imp0>0 else 0
-    thresh = 0.1 * float(np.max(smooth) or 1.0)
-    start0=0
-    for i,v in enumerate(smooth):
-        if v>=thresh: start0=max(0,i-2); break
-
-    # refine impact with wrist velocity + hand-hip proximity
-    impact_i = imp0
-    try:
-        import mediapipe as mp
-        mp_pose = mp.solutions.pose
-        win = max(2, int((fps/step)*1.0))
-        lo = max(0, imp0 - win//2); hi = min(len(sampled_frames)-1, imp0 + win//2)
-        with mp_pose.Pose(static_image_mode=True, model_complexity=1) as pose:
-            best_i = imp0; best_score=-1.0; prev_wr_y=None
-            for i in range(lo, hi+1):
-                fr = sampled_frames[i]; 
-                if fr is None: continue
-                rgb = cv2.cvtColor(fr, cv2.COLOR_BGR2RGB)
-                res = pose.process(rgb)
-                if not res.pose_landmarks: continue
-                lm = res.pose_landmarks.landmark
-                L_SH,R_SH = lm[mp_pose.PoseLandmark.LEFT_SHOULDER], lm[mp_pose.PoseLandmark.RIGHT_SHOULDER]
-                L_HP,R_HP = lm[mp_pose.PoseLandmark.LEFT_HIP], lm[mp_pose.PoseLandmark.RIGHT_HIP]
-                L_WR,R_WR = lm[mp_pose.PoseLandmark.LEFT_WRIST], lm[mp_pose.PoseLandmark.RIGHT_WRIST]
-                lead_wr = L_WR if L_WR.y < R_WR.y else R_WR
-                mid_hp_y = (L_HP.y + R_HP.y)/2.0
-                vy = 0.0
-                if prev_wr_y is not None: vy = (prev_wr_y - lead_wr.y)
-                prev_wr_y = lead_wr.y
-                prox = 1.0 - abs(lead_wr.y - mid_hp_y)
-                score = 0.6*float(vy) + 0.4*float(prox)
-                if score > best_score: best_score=score; best_i=i
-            impact_i = best_i
-    except Exception:
-        pass
-
-    sample_rate = (fps/step) if step>0 else fps
-    back = max(0.05, (top0 - start0) / sample_rate)
-    down = max(0.05, (impact_i - top0) / sample_rate)
-    ratio = back/down if down>0 else 3.0
-    prom = (float(np.max(smooth)) - float(np.median(smooth))) / (float(np.max(smooth)) + 1e-6)
-    sep  = (impact_i - top0) / (len(smooth) + 1e-6)
-    tempo_conf = float(max(0.1, min(0.95, 0.3 + 0.5*prom + 0.2*sep)))
-
-    if impact_i >= len(sampled_frames): impact_i = len(sampled_frames)-1
-    frame = sampled_frames[impact_i]
-    if frame is None:
-        emit({"tempo":{"back":round(back,3),"down":round(down,3),"ratio":round(ratio,3),"confidence":round(tempo_conf,2)},
-              "pose":{"angles":{"spineToVertical_deg":None,"leadArmToGround_deg":None},"confidence":0.0}})
-
-    h, w = frame.shape[:2]
-
-    # Horizon: override if provided; else Hough
-    horizon_deg = 0.0
-    if isinstance(horizon_override, float):
-        horizon_deg = float(horizon_override)
-    else:
-        try:
-            import cv2, numpy as np
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            edges = cv2.Canny(gray, 50, 150, apertureSize=3)
-            lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=80, minLineLength=w//4, maxLineGap=20)
-            angs=[]
-            if lines is not None:
-                for l in lines[:200]:
-                    x1,y1,x2,y2 = l[0]
-                    a = angle_deg((x1,y1),(x2,y2))
-                    if abs(a) < 20 or abs(abs(a)-180) < 20:
-                        angs.append(a)
-            if len(angs)>0:
-                horizon_deg = float(np.median(np.array(angs)))
-        except Exception:
-            horizon_deg = 0.0
-
-    # Pose at impact
-    try:
-        import mediapipe as mp, cv2
-        mp_pose = mp.solutions.pose
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        with mp_pose.Pose(static_image_mode=True, model_complexity=1) as pose:
-            res = pose.process(rgb)
-            if not res.pose_landmarks:
-                emit({"tempo":{"back":round(back,3),"down":round(down,3),"ratio":round(ratio,3),"confidence":round(tempo_conf,2)},
-                      "pose":{"angles":{"spineToVertical_deg":None,"leadArmToGround_deg":None},"confidence":0.2}})
-            lm = res.pose_landmarks.landmark
-            def P(i): return (lm[i].x*w, lm[i].y*h, lm[i].visibility)
-            L_SH,R_SH = P(mp_pose.PoseLandmark.LEFT_SHOULDER), P(mp_pose.PoseLandmark.RIGHT_SHOULDER)
-            L_HP,R_HP = P(mp_pose.PoseLandmark.LEFT_HIP), P(mp_pose.PoseLandmark.RIGHT_HIP)
-            L_WR,R_WR = P(mp_pose.PoseLandmark.LEFT_WRIST), P(mp_pose.PoseLandmark.RIGHT_WRIST)
-
-            lead_wr = L_WR if L_WR[1] < R_WR[1] else R_WR
-            lead_sh = L_SH if lead_wr is L_WR else R_SH
-            mid_sh = ((L_SH[0]+R_SH[0])/2.0, (L_SH[1]+R_SH[1])/2.0)
-            mid_hp = ((L_HP[0]+R_HP[0])/2.0, (L_HP[1]+R_HP[1])/2.0)
-
-            spine_vs_h = angle_deg(mid_hp, mid_sh)
-            arm_vs_h   = angle_deg(lead_sh, lead_wr)
-
-            spine_vs_h_corr = spine_vs_h - horizon_deg
-            arm_vs_h_corr   = arm_vs_h   - horizon_deg
-
-            spine_vs_v = normalize_deg(90.0 - normalize_deg(spine_vs_h_corr))
-            arm_vs_g   = normalize_deg(arm_vs_h_corr)
-
-            vis = [L_SH[2], R_SH[2], L_HP[2], R_HP[2], L_WR[2], R_WR[2]]
-            base_conf = float(sum(vis)/len(vis))
-            horizon_penalty = 0.0
-            if not isinstance(horizon_override, float):
-                horizon_penalty = 0.1 if abs(horizon_deg) > 5 else 0.0
-            pose_conf = max(0.1, min(0.95, base_conf - horizon_penalty))
-
-            spine_vs_v = clamp(spine_vs_v, 0, 35)
-            arm_vs_g   = clamp(arm_vs_g,   20, 120)
-
-            emit({
-              "tempo":{"back":round(back,3),"down":round(down,3),"ratio":round(ratio,3),"confidence":round(tempo_conf,2)},
-              "pose":{"angles":{"spineToVertical_deg":round(spine_vs_v,1),
-                                "leadArmToGround_deg":round(arm_vs_g,1)},
-                      "confidence":round(pose_conf,2)}
-            })
-    except Exception:
-        fallback()
+        out = analyze_video(args.video, horizon=args.horizon, fps_hint=args.fps, max_frames=args.max_frames)
+    except Exception as e:
+        out = {"tempo":{"back":0.0,"down":0.0,"ratio":0.0,"confidence":0.0},
+               "pose":{"angles":{"spineToVertical_deg":None,"leadArmToGround_deg":None},"confidence":0.0},
+               "error": f"analyze_video exception: {e.__class__.__name__}: {e}"}
+    print(json.dumps(out), flush=True)
 
 if __name__ == "__main__":
-    try: main()
-    except Exception: fallback()
+    main()

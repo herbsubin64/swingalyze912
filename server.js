@@ -1,9 +1,9 @@
 /**
- * Swingalyze Coach v3.1.1
- * Change: on upload, canonicalize video to MP4 (H.264/AAC) using ffprobe/ffmpeg.
- * - If source is H.264: remux (fast, lossless) -> .mp4
- * - Else: transcode to H.264 720p/30fps with AAC -> .mp4
- * Analyzer & PDF endpoints unchanged.
+ * Swingalyze Coach v3.1.4
+ * - Disk-backed jobs: analyze/stream uploads/<jobId>.mp4 even if not in memory
+ * - Range streaming for /api/job/:id/video
+ * - /api/upload still accepts raw bytes (MOV/MP4) and canonicalizes to MP4
+ * - PDF export unchanged (S3 optional)
  */
 const http = require('http');
 const fs = require('fs');
@@ -19,25 +19,16 @@ try {
   ({ S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3'));
   ({ getSignedUrl } = require('@aws-sdk/s3-request-presigner'));
   haveS3 = true;
-} catch (_) {}
+} catch {}
 
 const PORT = process.env.PORT || 3001;
 const SERVICE = 'swingalyze-api';
-const VERSION = '3.1.1';
+const VERSION = '3.1.4';
 const UPLOAD_DIR = path.join(process.cwd(), 'uploads');
 const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR);
 
-(function cleanOld(){ try{
-  const now = Date.now();
-  for (const f of fs.readdirSync(UPLOAD_DIR)) {
-    const p = path.join(UPLOAD_DIR, f);
-    const st = fs.statSync(p);
-    if (st.isFile() && now - st.mtimeMs > 24*3600*1000) fs.unlinkSync(p);
-  }
-} catch(_){} })();
-
-const jobs = new Map(); // jobId -> { status, path, created, result? }
+const jobs = new Map(); // id -> { status, path, created, result? }
 
 function send(res, code, body, headers = {}) { res.writeHead(code, headers); res.end(body); }
 function sendJSON(res, code, obj) { send(res, code, JSON.stringify(obj), {'Content-Type':'application/json'}); }
@@ -50,21 +41,18 @@ function run(cmd, args, opts={}) {
   return new Promise((resolve, reject) => {
     const p = spawn(cmd, args, opts);
     let out = '', err = '';
-    if (p.stdout) p.stdout.on('data', d => out += d.toString());
-    if (p.stderr) p.stderr.on('data', d => err += d.toString());
+    p.stdout?.on('data', d => out += d.toString());
+    p.stderr?.on('data', d => err += d.toString());
     p.on('close', code => code === 0 ? resolve({out, err}) : reject(new Error(err || `${cmd} exit ${code}`)));
   });
 }
 
 async function canonicalizeToMp4(srcPath, destPath) {
-  // Probe codec
   let codec = '';
   try {
     const probe = await run('ffprobe', ['-v','error','-select_streams','v:0','-show_entries','stream=codec_name','-of','default=nw=1:nk=1', srcPath]);
     codec = (probe.out || '').trim();
-  } catch { /* fall back to transcode */ }
-
-  // If already H.264 → remux; else transcode to h264 720p/30
+  } catch {}
   if (codec === 'h264') {
     await run('ffmpeg', ['-y','-i', srcPath, '-c','copy','-movflags','+faststart', destPath], { stdio:'ignore' });
   } else {
@@ -79,17 +67,19 @@ async function canonicalizeToMp4(srcPath, destPath) {
   return destPath;
 }
 
-function runPythonAnalyzer(videoPath, opts={}, timeoutMs=25000) {
+function pythonAnalyze(videoPath, opts={}, timeoutMs=25000) {
   const args = ['analyzer_pose.py', videoPath];
-  if (typeof opts.horizon_deg === 'number' && Number.isFinite(opts.horizon_deg)) args.push(`--horizon=${opts.horizon_deg}`);
+  if (typeof opts.horizon_deg === 'number' && Number.isFinite(opts.horizon_deg)) {
+    args.push(`--horizon=${opts.horizon_deg}`);
+  }
   return new Promise((resolve, reject) => {
     const child = spawn('python3', args, { cwd: process.cwd(), env: { ...process.env, PYTHONUNBUFFERED:'1' } });
     let out = '', err = '';
-    const t = setTimeout(()=>{ try{ child.kill('SIGKILL'); }catch{} reject(new Error('python analyzer timeout')); }, timeoutMs);
+    const t = setTimeout(()=>{ try{ child.kill('SIGKILL'); }catch{} reject(new Error('analyzer timeout')); }, timeoutMs);
     child.stdout.on('data', d => out += d.toString());
     child.stderr.on('data', d => err += d.toString());
     child.on('close', code => { clearTimeout(t);
-      if (code === 0) { try { resolve(JSON.parse(out)); } catch { reject(new Error('python json parse fail')); } }
+      if (code === 0) { try { resolve(JSON.parse(out)); } catch { reject(new Error('analyzer json parse')); } }
       else reject(new Error(err || `python exit ${code}`));
     });
   });
@@ -114,10 +104,15 @@ const MIME = {
   ".json": "application/json; charset=utf-8",
   ".png": "image/png",
   ".ico": "image/x-icon",
-  ".pdf": "application/pdf"
+  ".pdf": "application/pdf",
+  ".mp4": "video/mp4"
 };
 
-// --- HTTP server ---
+function diskJobPath(id) {
+  const p = path.join(UPLOAD_DIR, `${id}.mp4`);
+  return (fs.existsSync(p) && fs.statSync(p).isFile()) ? p : null;
+}
+
 const server = http.createServer(async (req, res) => {
   const parsed = url.parse(req.url, true);
   const pathname = parsed.pathname || '/';
@@ -127,26 +122,20 @@ const server = http.createServer(async (req, res) => {
     return sendJSON(res, 200, { ok: true, ts: Date.now(), service: SERVICE, version: VERSION });
   }
 
-  // Upload (raw bytes) -> canonical MP4 job
+  // Upload raw bytes -> canonical MP4 job
   if (req.method === 'POST' && pathname === '/api/upload') {
     const ct = (req.headers['content-type'] || '').toLowerCase();
     if (!ct.startsWith('video/') && ct !== 'application/octet-stream') {
-      return sendJSON(res, 400, { ok:false, error:'Send raw video bytes (Content-Type: video/*)' });
+      return sendJSON(res, 400, { ok:false, error:'Send raw video bytes (Content-Type: video/* or application/octet-stream)' });
     }
-    const id = uid();
+    const id = crypto.randomBytes(8).toString('hex');
     const tmpPath = path.join(UPLOAD_DIR, `${id}.upload`);
     const ws = fs.createWriteStream(tmpPath);
     let written = 0, tooBig = false;
-    req.on('data', chunk => {
-      written += chunk.length;
-      if (written > MAX_UPLOAD_BYTES) { tooBig = true; ws.destroy(); req.destroy(); }
-    });
+    req.on('data', chunk => { written += chunk.length; if (written > MAX_UPLOAD_BYTES) { tooBig = true; ws.destroy(); req.destroy(); } });
     req.pipe(ws);
     ws.on('finish', async () => {
-      if (tooBig) {
-        try { fs.unlinkSync(tmpPath); } catch {}
-        return sendJSON(res, 413, { ok:false, error:`File too large (> ${Math.round(MAX_UPLOAD_BYTES/1024/1024)}MB)` });
-      }
+      if (tooBig) { try{fs.unlinkSync(tmpPath);}catch{}; return sendJSON(res, 413, { ok:false, error:'File too large' }); }
       try {
         const mp4Path = path.join(UPLOAD_DIR, `${id}.mp4`);
         await canonicalizeToMp4(tmpPath, mp4Path);
@@ -155,34 +144,77 @@ const server = http.createServer(async (req, res) => {
         return sendJSON(res, 200, { ok:true, jobId: id });
       } catch (e) {
         try { fs.unlinkSync(tmpPath); } catch {}
-        return sendJSON(res, 500, { ok:false, error: 'transcode_failed' });
+        return sendJSON(res, 500, { ok:false, error:'transcode_failed' });
       }
     });
     ws.on('error', () => sendJSON(res, 500, { ok:false, error:'upload_fail' }));
     return;
   }
 
-  // Job status
-  if (req.method === 'GET' && pathname.startsWith('/api/job/')) {
-    const id = pathname.split('/').pop();
+  // Stream MP4 for a job (disk-backed)
+  if (req.method === 'GET' && /^\/api\/job\/[^/]+\/video$/.test(pathname)) {
+    const id = pathname.split('/')[3];
     const job = jobs.get(id);
-    if (!job) return sendJSON(res, 404, { ok:false, error:'job not found' });
-    return sendJSON(res, 200, { ok:true, status: job.status });
+    const filePath = job?.path || diskJobPath(id);
+    if (!filePath) return sendJSON(res, 404, { ok:false, error:'job not found' });
+
+    const stat = fs.statSync(filePath);
+    const range = req.headers.range;
+    if (range) {
+      const m = /^bytes=(\d+)-(\d*)$/.exec(range);
+      if (m) {
+        const start = parseInt(m[1], 10);
+        const end = m[2] ? parseInt(m[2], 10) : stat.size - 1;
+        if (start <= end) {
+          res.writeHead(206, {
+            'Content-Type': 'video/mp4',
+            'Content-Length': end - start + 1,
+            'Content-Range': `bytes ${start}-${end}/${stat.size}`,
+            'Accept-Ranges': 'bytes',
+            'Cache-Control': 'no-store'
+          });
+          return fs.createReadStream(filePath, { start, end }).pipe(res);
+        }
+      }
+    }
+    res.writeHead(200, {
+      'Content-Type': 'video/mp4',
+      'Content-Length': stat.size,
+      'Accept-Ranges': 'bytes',
+      'Cache-Control': 'no-store'
+    });
+    return fs.createReadStream(filePath).pipe(res);
   }
 
-  // Analyze (optional horizon_deg)
+  // Job status
+  if (req.method === 'GET' && pathname.startsWith('/api/job/')) {
+    const id = pathname.split('/')[3];
+    const job = jobs.get(id);
+    if (job) return sendJSON(res, 200, { ok:true, status: job.status });
+    if (diskJobPath(id)) return sendJSON(res, 200, { ok:true, status: 'ready' });
+    return sendJSON(res, 404, { ok:false, error:'job not found' });
+  }
+
+  // Analyze (disk-backed)
   if (req.method === 'POST' && pathname === '/api/analyze') {
     let body=''; req.on('data', c => body += c);
     req.on('end', async () => {
       let payload={}; try { payload = body ? JSON.parse(body) : {}; } catch {}
       const jobId = payload.jobId || null;
       const horizon_deg = (typeof payload.horizon_deg === 'number') ? payload.horizon_deg : null;
-      const job = jobId ? jobs.get(jobId) : null;
-      if (!job || !job.path) return sendJSON(res, 200, mockResult({ hasVideo:false }));
+
+      let job = jobId ? jobs.get(jobId) : null;
+      let videoPath = job?.path || (jobId ? diskJobPath(jobId) : null);
+      if (!videoPath) return sendJSON(res, 200, mockResult({ hasVideo:false }));
+
+      if (!job) { // backfill into memory
+        job = { status:'ready', path: videoPath, created: Date.now() };
+        jobs.set(jobId, job);
+      }
 
       jobs.get(jobId).status = 'processing';
       try {
-        const py = await runPythonAnalyzer(job.path, { horizon_deg });
+        const py = await pythonAnalyze(videoPath, { horizon_deg });
         const result = {
           ok: true,
           received: { jobId, hasVideo: true },
@@ -202,7 +234,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Export PDF (unchanged from 3.1.0)
+  // Export PDF
   if (req.method === 'POST' && pathname === '/api/export/pdf') {
     let body=''; req.on('data', c => body += c);
     req.on('end', async () => {
@@ -236,15 +268,13 @@ const server = http.createServer(async (req, res) => {
             doc.end();
           });
         })();
-
         if (payload?.s3 === true && haveS3 && process.env.S3_BUCKET) {
           const s3 = new S3Client({ region: process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION });
-          const key = `reports/${new Date().toISOString().slice(0,10)}/${uid()}.pdf`;
+          const key = `reports/${new Date().toISOString().slice(0,10)}/${crypto.randomBytes(6).toString('hex')}.pdf`;
           await s3.send(new PutObjectCommand({ Bucket: process.env.S3_BUCKET, Key: key, Body: pdf, ContentType:'application/pdf' }));
           const url = await getSignedUrl(s3, new GetObjectCommand({ Bucket: process.env.S3_BUCKET, Key: key }), { expiresIn: 7*24*3600 });
           return sendJSON(res, 200, { ok:true, uploaded:true, s3key:key, url });
         }
-
         res.writeHead(200,{ 'Content-Type':'application/pdf', 'Content-Disposition':'attachment; filename="swingalyze_report.pdf"', 'Content-Length': pdf.length });
         return res.end(pdf);
       } catch (e) { return sendJSON(res, 500, { ok:false, error:e.message }); }
@@ -252,11 +282,11 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Static
+  // Static files
   const safe = pathname === '/' ? 'index.html' : pathname.slice(1);
   const filePath = path.join(process.cwd(), safe);
   const ext = path.extname(filePath).toLowerCase();
-  const contentType = { ".html":"text/html; charset=utf-8",".js":"application/javascript; charset=utf-8",".css":"text/css; charset=utf-8",".json":"application/json; charset=utf-8",".png":"image/png",".ico":"image/x-icon",".pdf":"application/pdf" }[ext] || 'text/plain; charset=utf-8';
+  const contentType = MIME[ext] || 'text/plain; charset=utf-8';
   if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) return serveFile(res, filePath, contentType);
   return serveFile(res, path.join(process.cwd(), 'index.html'));
 });
