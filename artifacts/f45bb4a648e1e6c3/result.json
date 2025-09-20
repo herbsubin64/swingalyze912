@@ -1,1 +1,37 @@
-{"ok":true,"received":{"jobId":"f45bb4a648e1e6c3","hasVideo":true},"keyframes":["address","club-parallel","top","impact","follow-through"],"tempo":{"back":3.77,"down":0.3,"ratio":12.556,"confidence":0.53},"pose":{"angles":{"spineToVertical_deg":4.3,"leadArmToGround_deg":54.7},"confidence":0.61},"ts":1758332430891,"variant":"golf1"}
+{
+  "ok": true,
+  "received": {
+    "jobId": "f45bb4a648e1e6c3",
+    "hasVideo": true
+  },
+  "keyframes": [
+    "address",
+    "club-parallel",
+    "top",
+    "impact",
+    "follow-through"
+  ],
+  "tempo": {
+    "back": 3.77,
+    "down": 0.3,
+    "ratio": 12.556,
+    "confidence": 0.53
+  },
+  "pose": {
+    "angles": {
+      "spineToVertical_deg": 4.3,
+      "leadArmToGround_deg": 54.7
+    },
+    "confidence": 0.61
+  },
+  "ts": 1758332430891,
+  "variant": "golf1",
+  "horizon_deg": 61,
+  "tempo_stable": {
+    "back": 3.77,
+    "down": 0.3,
+    "ratio": 6,
+    "confidence": 0.53,
+    "notes": "capped"
+  }
+}
