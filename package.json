@@ -1,17 +1,16 @@
 {
-  "name": "swingalyze-coach",
-  "version": "3.1.0",
+  "name": "swingalyze-m1",
+  "version": "3.2.0",
   "private": true,
-  "description": "Swingalyze Coach v3.1 — robust analyzer + PDF export + optional S3 share",
-  "main": "server.js",
+  "type": "module",
   "scripts": {
-    "start": "node server.js",
-    "dev": "PORT=3001 node server.js"
+    "start": "node server.js"
   },
-  "engines": { "node": ">=18" },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.708.0",
-    "@aws-sdk/s3-request-presigner": "^3.708.0",
+    "axios": "^1.7.7",
+    "canvas": "^2.11.2",
+    "express": "^4.19.2",
+    "multer": "^1.4.5-lts.2",
     "pdfkit": "^0.15.0"
   }
 }
