@@ -1,7 +1,6 @@
 {
   "id": "f45bb4a648e1e6c3",
   "version": "3.1.4",
-  "horizon_deg": 61,
   "spine": 4.3,
   "tempo": {
     "back": 3.77,
@@ -9,17 +8,10 @@
     "ratio": 12.556,
     "confidence": 0.53
   },
-  "tempo_stable": {
-    "back": 3.77,
-    "down": 0.3,
-    "ratio": 6,
-    "confidence": 0.53,
-    "notes": "capped"
-  },
   "files": {
     "json": {
       "path": "artifacts/f45bb4a648e1e6c3/result.json",
-      "sha256": "5b73afc547b71215d6a188060bcc5027ede6eb626fe4fe49da291f6824beddb7"
+      "sha256": "5cd5ec5770e9c7d3f72e5e391d416c8432dca1f58890831050f9a15a53e46b5d"
     },
     "pdf": {
       "path": "artifacts/f45bb4a648e1e6c3/report.pdf",
