@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Swingalyze Coach v3.1.0</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>Swingalyze Coach v3.1.0</h1>
+    <div id="status">Status: …</div>
+  </header>
+
+  <main>
+    <section class="bar">
+      <label class="btn">
+        <input id="video" type="file" accept="video/*" hidden>
+        Upload video
+      </label>
+      <button id="analyze" class="btn">Analyze</button>
+      <button id="exportPng" class="btn">Export PNG Report</button>
+      <button id="exportJson" class="btn">Export JSON Report</button>
+      <button id="exportPdf" class="btn accent">Export PDF</button>
+      <label class="inline"><input id="s3toggle" type="checkbox"> Upload to S3</label>
+    </section>
+
+    <section class="slots">
+      <div class="slot-row">
+        <span class="slot-label">Keyframes:</span>
+        <button class="slot btn" data-slot="address">Address</button>
+        <button class="slot btn" data-slot="club-parallel">Club-parallel</button>
+        <button class="slot btn" data-slot="top">Top</button>
+        <button class="slot btn" data-slot="impact">Impact</button>
+        <button class="slot btn" data-slot="follow-through">Follow-through</button>
+        <button id="setFrame" class="btn ghost">Set Frame</button>
+        <button id="clearSlot" class="btn ghost">Clear Slot</button>
+      </div>
+    </section>
+
+    <section class="stage">
+      <video id="player" playsinline controls></video>
+      <canvas id="overlay"></canvas>
+    </section>
+
+    <section class="tools">
+      <div class="row">
+        <button class="btn" data-step="-1">⟵ 1 frame</button>
+        <button class="btn" data-step="1">1 frame ⟶</button>
+        <select id="drawMode">
+          <option value="none">No drawing</option>
+          <option value="spine">Spine tilt (green)</option>
+          <option value="shaft">Lead-arm / shaft (blue)</option>
+          <option value="ground">Ground / stance (yellow)</option>
+        </select>
+        <button id="undo" class="btn ghost">Undo</button>
+        <button id="clearAll" class="btn ghost">Clear All</button>
+      </div>
+      <div class="row hint">Tip: pick a keyframe, hit <b>Set Frame</b> then draw your lines for that slot.</div>
+    </section>
+
+    <section class="panels">
+      <div>
+        <h3>Measured Angles (current slot)</h3>
+        <div id="angleTable"></div>
+        <div id="analyzerAngles" class="analyzer-angles"></div>
+      </div>
+      <div>
+        <h3>Coaching Tips</h3>
+        <div id="tips" class="tips"></div>
+      </div>
+      <div class="full">
+        <h3>Raw Metrics</h3>
+        <pre id="metrics"></pre>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <small>API: <code>/api/status</code> • <code>/api/upload</code> • <code>/api/analyze</code> • <code>/api/export/pdf</code> • <code>/api/job/:id/status</code></small>
+  </footer>
+
+  <script src="script.js?v=310"></script>
+</body>
+</html>
